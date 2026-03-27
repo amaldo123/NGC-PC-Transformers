@@ -207,8 +207,7 @@ class NGCTransformer:
                 self.z_actfx.zF >> self.output.e_out.mu
                 self.z_target.z >> self.output.e_out.target
 
-                self.output.e_out.dmu >> self.Outgrad.dmu
-                self.Outgrad.dmu_ >> self.output.E_out.inputs
+                self.output.e_out.dmu >> self.output.E_out.inputs
 
 
                 self.output.E_out.outputs >> self.output.z_out.j
@@ -220,7 +219,7 @@ class NGCTransformer:
 
 
                 self.output.z_out.zF >> self.output.W_out.pre
-                self.Outgrad.dmu_ >> self.output.W_out.post
+                self.output.e_out.dmu >> self.output.W_out.post
 
                         
                         
@@ -512,7 +511,7 @@ class NGCTransformer:
         #    self.projection.Q_embed.pos_weights.set(self.embedding.W_embed.pos_weights.get())
         # for i in range(self.n_layers):
         #     block_proj= self.projection.blocks[i]
-        #     block= self.blocks[i] 
+        #     block= self.blocks[i]
         #     block_proj.Q_q.weights.set(block.attention.W_q.weights.get())
         #     block_proj.Q_q.biases.set(block.attention.W_q.biases.get())
         #     block_proj.Q_k.weights.set(block.attention.W_k.weights.get())
@@ -532,27 +531,23 @@ class NGCTransformer:
         # self.projection.Q_out.weights.set(self.output.W_out.weights.get())
         # self.projection.Q_out.biases.set(self.output.W_out.biases.get())
         # self.projection.q_target_Ratecell.j_td.set(jnp.zeros((self.batch_size * self.seq_len, self.vocab_size)))
-        
-       
+
+
         self.clamp_input(obs)
         self.clamp_infer_target(lab)
-        
+
         # self.project.run(t=0., dt=1.)
 
 
         for i in range(self.n_layers):
-        #     block_proj= self.projection.blocks[i]   
             b= self.blocks[i]
-        #     b.attention.z_qkv.z.set(block_proj.q_qkv_Ratecell.z.get())
-        #     b.mlp.z_mlp.z.set(block_proj.q_mlp_Ratecell.z.get())
-        #     b.mlp.z_mlp2.z.set(block_proj.q_mlp2_Ratecell.z.get())
             b.attention.E_q.weights.set(jnp.transpose(b.attention.W_q.weights.get()))
             b.attention.E_k.weights.set(jnp.transpose(b.attention.W_k.weights.get()))
             b.attention.E_v.weights.set(jnp.transpose(b.attention.W_v.weights.get()))
             b.attention.E_attn.weights.set(jnp.transpose(b.attention.W_attn_out.weights.get()))
-            b.mlp.E_mlp.weights.set(jnp.transpose(b.mlp.W_mlp2.weights.get()))  
+            b.mlp.E_mlp.weights.set(jnp.transpose(b.mlp.W_mlp2.weights.get()))
             b.mlp.E_mlp1.weights.set(jnp.transpose(b.mlp.W_mlp1.weights.get()))
-       
+
         self.output.E_out.weights.set(jnp.transpose(self.output.W_out.weights.get()))
         # self.output.z_out.z.set(self.projection.q_out_Ratecell.z.get())
         # self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
