@@ -368,13 +368,13 @@ class NGCTransformer:
                     project_process >> block_proj.Q_q.advance_state
                     project_process >> block_proj.Q_k.advance_state
                     project_process >> block_proj.Q_v.advance_state
-                    project_process >> block_proj.q_attn_Ratecell.advance_state
                     project_process >> block_proj.q_attn_block.advance_state
                     project_process >> block_proj.reshape_3d_to_2d_proj1.advance_state
+                    project_process >> block_proj.q_attn_Ratecell.advance_state
                     project_process >> block_proj.Q_attn_out.advance_state
                     project_process >> block_proj.q_mlp_Ratecell.advance_state
-                    project_process >> block_proj.q_mlp2_Ratecell.advance_state
                     project_process >> block_proj.Q_mlp1.advance_state
+                    project_process >> block_proj.q_mlp2_Ratecell.advance_state
                     project_process >> block_proj.Q_mlp2.advance_state
                     reset_process >> block_proj.q_qkv_Ratecell.reset
                     reset_process >> block_proj.q_attn_block.reset
