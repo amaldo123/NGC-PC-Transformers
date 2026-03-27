@@ -580,7 +580,7 @@ class NGCTransformer:
         block_errors = 0.
         for i in range(self.n_layers):
                 block = self.blocks[i]
-                block_errors += block.attention.e_attn.L.get() + block.mlp.e_mlp.L.get() + block.mlp.e_mlp1.L.get()
+                block_errors += block.attention.e_qkv.L.get() + block.attention.e_attn.L.get() + block.mlp.e_mlp.L.get() + block.mlp.e_mlp1.L.get()
 
         EFE = L4 + block_errors + L1
 
