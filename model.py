@@ -290,18 +290,16 @@ class NGCTransformer:
                     advance_process >> block.attention.attn_block.advance_state
                     advance_process >> block.reshape_3d_to_2d.advance_state
                     advance_process >> block.attention.e_qkv.advance_state
-                    advance_process >> block.attention.e_attn.advance_state
                     advance_process >> block.attention.E_q.advance_state
                     advance_process >> block.attention.E_k.advance_state
                     advance_process >> block.attention.E_v.advance_state
 
-
                     advance_process >> block.attention.z_attn.advance_state
                     advance_process >> block.attention.W_attn_out.advance_state
-                    advance_process >> block.attention.E_attn.advance_state
-                    
-                    
+
                     advance_process >> block.mlp.z_mlp.advance_state
+                    advance_process >> block.attention.e_attn.advance_state
+                    advance_process >> block.attention.E_attn.advance_state
                     advance_process >> block.mlp.W_mlp1.advance_state
                     advance_process >> block.mlp.e_mlp1.advance_state
                     advance_process >> block.mlp.E_mlp1.advance_state
@@ -543,6 +541,7 @@ class NGCTransformer:
             block_proj= self.projection.blocks[i]
             b= self.blocks[i]
             b.attention.z_qkv.z.set(block_proj.q_qkv_Ratecell.z.get())
+            b.attention.z_attn.z.set(block_proj.q_attn_Ratecell.z.get())
             b.mlp.z_mlp.z.set(block_proj.q_mlp_Ratecell.z.get())
             b.mlp.z_mlp2.z.set(block_proj.q_mlp2_Ratecell.z.get())
             b.attention.E_q.weights.set(jnp.transpose(b.attention.W_q.weights.get()))
@@ -582,14 +581,14 @@ class NGCTransformer:
                 block = self.blocks[i]
                 block_errors += block.attention.e_qkv.L.get() + block.attention.e_attn.L.get() + block.mlp.e_mlp.L.get() + block.mlp.e_mlp1.L.get()
 
-        EFE = L4 + block_errors + L1
+        EFE =  block_errors + L1
 
         if adapt_synapses == True:
                 self.embedding_evolve.run()
                 self.evolve.run(t=self.T,dt=1.)
-                
+
         ## skip E/M steps if just doing test-time inference
-        return y_mu_inf, y_mu, EFE 
+        return y_mu_inf, y_mu, EFE, L1, L4, block_errors
 
     def get_latents(self):
         return self.projection.q_out_Ratecell.z.get()
