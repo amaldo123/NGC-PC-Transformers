@@ -126,10 +126,10 @@ class NGCTransformer:
                     
                     block.attention.z_attn.zF >>block.attention.W_attn_out.inputs 
                     block.attention.W_attn_out.outputs >> block.attention.e_attn.mu
-                    block.mlp.z_mlp.z >> block.attention.e_attn.target
+                    block.mlp.z_mlp1.z >> block.attention.e_attn.target
 
                     
-                    block.mlp.z_mlp.zF >> block.mlp.W_mlp1.inputs
+                    block.mlp.z_mlp1.zF >> block.mlp.W_mlp1.inputs
                     
 
 
@@ -173,9 +173,9 @@ class NGCTransformer:
                     block.attention.e_qkv.dtarget >> block.attention.z_attn.j_td
 
                     block.mlp.E_mlp2.outputs  >> block.mlp.z_mlp2.j
-                    block.mlp.E_mlp1.outputs >> block.mlp.z_mlp.j
+                    block.mlp.E_mlp1.outputs >> block.mlp.z_mlp1.j
 
-                    block.attention.e_attn.dtarget >> block.mlp.z_mlp.j_td
+                    block.attention.e_attn.dtarget >> block.mlp.z_mlp1.j_td
                     block.mlp.e_mlp1.dtarget >> block.mlp.z_mlp2.j_td
 
 
@@ -192,7 +192,7 @@ class NGCTransformer:
                     block.attention.e_attn.dmu >> block.attention.W_attn_out.post
 
 
-                    block.mlp.z_mlp.zF  >> block.mlp.W_mlp1.pre
+                    block.mlp.z_mlp1.zF  >> block.mlp.W_mlp1.pre
                     block.mlp.e_mlp1.dmu >> block.mlp.W_mlp1.post
 
                     block.mlp.z_mlp2.zF >> block.mlp.W_mlp2.pre
@@ -296,7 +296,7 @@ class NGCTransformer:
                     advance_process >> block.attention.z_attn.advance_state
                     advance_process >> block.attention.W_attn_out.advance_state
 
-                    advance_process >> block.mlp.z_mlp.advance_state
+                    advance_process >> block.mlp.z_mlp1.advance_state
                     advance_process >> block.attention.e_attn.advance_state
                     advance_process >> block.attention.E_attn.advance_state
                     advance_process >> block.mlp.W_mlp1.advance_state
@@ -314,7 +314,7 @@ class NGCTransformer:
                     reset_process >> block.attention.z_attn.reset
                     reset_process >> block.attention.e_qkv.reset
                     reset_process >> block.attention.e_attn.reset
-                    reset_process >> block.mlp.z_mlp.reset
+                    reset_process >> block.mlp.z_mlp1.reset
                     reset_process >> block.mlp.z_mlp2.reset
                     reset_process >> block.mlp.e_mlp2.reset
                     reset_process >> block.mlp.e_mlp1.reset
@@ -482,7 +482,7 @@ class NGCTransformer:
             block.mlp.e_mlp2.L.set(self.circuit.get_components(f"{b_prefix}_e_mlp2").L.get())
             block.mlp.e_mlp1.L.set(self.circuit.get_components(f"{b_prefix}_e_mlp1").L.get())
             # --- Map MLP Sub-block ---
-            block.mlp.z_mlp.z.set(   self.circuit.get_components(f"{b_prefix}_z_mlp"))
+            block.mlp.z_mlp1.z.set(   self.circuit.get_components(f"{b_prefix}_z_mlp1"))
             block.mlp.z_mlp2.z.set(  self.circuit.get_components(f"{b_prefix}_z_mlp2"))
             block.mlp.W_mlp1.weights.set(self.circuit.get_components(f"{b_prefix}_W_mlp1").weights.get())
             block.mlp.W_mlp2.weights.set(self.circuit.get_components(f"{b_prefix}_W_mlp2").weights.get())
@@ -539,7 +539,7 @@ class NGCTransformer:
             b= self.blocks[i]
             # b.attention.z_qkv.z.set(block_proj.q_qkv_Ratecell.z.get())
             # b.attention.z_attn.z.set(block_proj.q_attn_Ratecell.z.get())
-            # b.mlp.z_mlp.z.set(block_proj.q_mlp_Ratecell.z.get())
+            # b.mlp.z_mlp1.z.set(block_proj.q_mlp_Ratecell.z.get())
             # b.mlp.z_mlp2.z.set(block_proj.q_mlp2_Ratecell.z.get())
             b.attention.E_q.weights.set(jnp.transpose(b.attention.W_q.weights.get()))
             b.attention.E_k.weights.set(jnp.transpose(b.attention.W_k.weights.get()))

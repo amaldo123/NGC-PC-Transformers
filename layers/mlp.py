@@ -17,7 +17,7 @@ class MLP:
         dkey, *subkeys = random.split(dkey, 10)
        
 
-        self.z_mlp = RateCell(f"{prefix}z_mlp", n_units=n_embed, tau_m=tau_m, act_fx="identity", batch_size=batch_size * seq_len)
+        self.z_mlp1 = RateCell(f"{prefix}z_mlp1", n_units=n_embed, tau_m=tau_m, act_fx="identity", batch_size=batch_size * seq_len)
         self.z_mlp2 = RateCell(f"{prefix}z_mlp2", n_units= 4* n_embed, tau_m= tau_m, act_fx="gelu", batch_size=batch_size * seq_len)
         
         self.W_mlp1 = HebbianSynapse(f"{prefix}W_mlp1", shape=(n_embed, 4*n_embed), batch_size = batch_size * seq_len, eta=eta, weight_init=dist.uniform(amin=wlb, amax=wub),
@@ -36,7 +36,7 @@ class MLP:
     def get_components(self):
         """Return all components for easy access"""
         return {
-            'z_mlp': self.z_mlp,
+            'z_mlp1': self.z_mlp1,
             'W_mlp1': self.W_mlp1,
             'W_mlp2': self.W_mlp2,
             'e_mlp2': self.e_mlp2,
