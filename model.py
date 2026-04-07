@@ -585,7 +585,7 @@ class NGCTransformer:
                 self.evolve.run(t=self.T,dt=1.)
 
         ## skip E/M steps if just doing test-time inference
-        return y_mu_inf, y_mu, EFE, L1, L4, block_errors
+        return y_mu, EFE
 
     def get_latents(self):
         return self.projection.q_out_Ratecell.z.get()
