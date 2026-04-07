@@ -32,8 +32,8 @@ class Attention:
     
         dkey, *subkeys = random.split(dkey, 10)
 
-        self.z_qkv = AttnRateCell(f"{prefix}z_qkv", n_units=n_embed, tau_m=tau_m, 
-                            act_fx="identity", batch_size=batch_size * seq_len )
+        self.z_qkv = AttnRateCell(f"{prefix}z_qkv", n_units=n_embed, tau_m=tau_m,
+                            act_fx="identity", batch_size=batch_size * seq_len, prior=("gaussian", 0.1) )
         self.z_attn = RateCell(f"{prefix}z_attn", n_units=n_embed, tau_m=tau_m,
                             act_fx="identity", batch_size=batch_size * seq_len )
         
