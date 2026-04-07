@@ -1,5 +1,5 @@
 import jax
-from jax import numpy as jnp, random
+from jax import numpy as jnp, random,jit
 from model import NGCTransformer
 from ngclearn.utils.metric_utils import measure_CatNLL
 from data_preprocess.data_loader import DataLoader
@@ -12,6 +12,7 @@ jax.config.update("jax_default_matmul_precision", "high")
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+
 def main():
     seq_len, batch_size, n_embed, vocab_size, n_layers, n_heads, n_iter, optim_type = config.seq_len, config.batch_size, config.n_embed, config.vocab_size, config.n_layers, config.n_heads, config.n_iter, config.optim_type
     pos_learnable= config.pos_learnable
@@ -31,7 +32,7 @@ def main():
     model = NGCTransformer(dkey, batch_size=batch_size, seq_len=seq_len, n_embed=n_embed, vocab_size=vocab_size, n_layers=n_layers, n_heads=n_heads,
                           T=T, dt=1., tau_m=tau_m , act_fx=act_fx, eta=eta, dropout_rate= dropout_rate, exp_dir="exp",
                   loadDir= None, pos_learnable= pos_learnable, optim_type=optim_type, wub = wub, wlb= wlb, model_name="ngc_transformer" )
-
+    
     def train_model(data_loader):
         train_EFE = 0.
         total_nll, total_tokens = 0., 0
@@ -42,7 +43,7 @@ def main():
 
             targets_flat = jax.nn.one_hot(targets, vocab_size).reshape(-1, vocab_size)
 
-            _, y_mu, _EFE = model.process(obs=inputs, lab=targets_flat, adapt_synapses=True)
+            y_mu, _EFE = model.process(obs=inputs, lab=targets_flat, adapt_synapses=True)
             train_EFE += _EFE
 
             y_pred = y_mu.reshape(-1, vocab_size)
