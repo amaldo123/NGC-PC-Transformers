@@ -16,6 +16,7 @@ from layers.output import Output
 from utils.model_util import ReshapeComponent, Outgrad
 from projection.projection import Projection
 import numpy as np
+from utils.random_init import RandomInit
 
 
 
@@ -78,6 +79,7 @@ class NGCTransformer:
                 
             self.z_target=RateCell("z_target", n_units= self.vocab_size, tau_m=0., act_fx="identity", batch_size=self.batch_size * self.seq_len) 
             self.z_actfx= RateCell("z_actfx", n_units= self.vocab_size, tau_m=tau_m, act_fx="softmax", batch_size=self.batch_size * self.seq_len)
+            self.random_init = RandomInit("random_init", batch_size=self.batch_size * self.seq_len,n_embed=self.n_embed)
             self.projection = Projection(dkey=subkeys[29], n_embed=self.n_embed, seq_len=self.seq_len, batch_size=self.batch_size,
                                              vocab_size=self.vocab_size, eta=eta, optim_type=optim_type, pos_learnable=pos_learnable, wub=wub, wlb=wlb, n_blocks=n_layers, n_heads=n_heads, dropout_rate=dropout_rate)
             self.reshape_4d_to_2d = ReshapeComponent("reshape_4d_to_2d",
@@ -543,9 +545,12 @@ class NGCTransformer:
         for i in range(self.n_layers):
         #     block_proj= self.projection.blocks[i]   
             b= self.blocks[i]
-        #     b.attention.z_qkv.z.set(block_proj.q_qkv_Ratecell.z.get())
-        #     b.mlp.z_mlp.z.set(block_proj.q_mlp_Ratecell.z.get())
-        #     b.mlp.z_mlp2.z.set(block_proj.q_mlp2_Ratecell.z.get())
+            self.random_init.advance_state()
+            b.attention.z_qkv.z.set(self.random_init.z_qkv.get())
+            b.attention.z_attn.z.set(self.random_init.z_attn.get())
+            b.mlp.z_mlp.z.set(self.random_init.z_mlp.get())
+            b.mlp.z_mlp2.z.set(self.random_init.z_mlp2.get())
+        
             b.attention.E_q.weights.set(jnp.transpose(b.attention.W_q.weights.get()))
             b.attention.E_k.weights.set(jnp.transpose(b.attention.W_k.weights.get()))
             b.attention.E_v.weights.set(jnp.transpose(b.attention.W_v.weights.get()))
@@ -554,7 +559,7 @@ class NGCTransformer:
             b.mlp.E_mlp1.weights.set(jnp.transpose(b.mlp.W_mlp1.weights.get()))
        
         self.output.E_out.weights.set(jnp.transpose(self.output.W_out.weights.get()))
-        # self.output.z_out.z.set(self.projection.q_out_Ratecell.z.get())
+        self.output.z_out.z.set(self.random_init.z_out.get())
         # self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
         # self.output.e_out.dtarget.set(self.projection.eq_target.dtarget.get())
         
