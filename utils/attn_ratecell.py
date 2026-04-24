@@ -241,7 +241,7 @@ class AttnRateCell(JaxComponent): ## Rate-coded/real-valued cell
                 tmp_z = threshold_soft(tmp_z, self.thr_lmbda)
             elif self.thresholdType == "cauchy_threshold":
                 tmp_z = threshold_cauchy(tmp_z, self.thr_lmbda)
-            z = jnp.clip(tmp_z, -5.0, 5.0) ## pre-activation function value(s)
+            z = jnp.clip(tmp_z, -3.0, 3.0) ## pre-activation function value(s)
             zF = self.fx(z) * self.output_scale ## post-activation function value(s)
         else:
             ## run in "stateless" mode (when no membrane time constant provided)
