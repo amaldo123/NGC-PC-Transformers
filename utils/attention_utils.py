@@ -41,7 +41,8 @@ def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, ba
         
     attention = jnp.einsum("BHTS,BHSE->BHTE", score, v)
     attention = attention.transpose([0, 2, 1, 3]).reshape((B, S, -1))
-    
+    attention = jnp.clip(attention, -3.0, 3.0)
+
     return attention, s_c, q, k, v
 
 
