@@ -21,9 +21,9 @@ def eval_model(model: NGCTransformer, data_loader, vocab_size: int):
         targets = batch[1][1]
 
         targets_flat = jax.nn.one_hot(targets.flatten(), vocab_size)
-        _, y_mu, _ = model.process(obs=inputs,
-                                   lab=targets_flat,
-                                   adapt_synapses=False)
+        y_mu, _ = model.process(obs=inputs,
+                                lab=targets_flat,
+                                adapt_synapses=False)
 
         y_pred = y_mu.reshape(-1, vocab_size)
         batch_ce_loss = measure_CatNLL(y_pred, targets_flat).mean()
@@ -71,7 +71,11 @@ def load_weights_into_model(model, model_dir):
 
 
 if __name__ == "__main__":
-    
+
+    if not os.path.exists("exp"):
+        print("Error: No saved model found in 'exp/'. Run training first.")
+        exit(1)
+
     dkey = jax.random.PRNGKey(0)
     model = NGCTransformer(
         dkey=dkey,
