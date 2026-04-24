@@ -503,7 +503,7 @@ class NGCTransformer:
     def process(self, obs, lab, adapt_synapses=True):
         
         self.reset.run()
-        ## PROJECTION PHASE (commented out for ablation test) ##
+        ## PROJECTION PHASE (disabled) ##
         # self.projection.Q_embed.word_weights.set(self.embedding.W_embed.word_weights.get())
         # if self.embedding.W_embed.pos_learnable:
         #    self.projection.Q_embed.pos_weights.set(self.embedding.W_embed.pos_weights.get())
@@ -511,22 +511,15 @@ class NGCTransformer:
         #     block_proj= self.projection.blocks[i]
         #     block= self.blocks[i]
         #     block_proj.Q_q.weights.set(block.attention.W_q.weights.get())
-        #     block_proj.Q_q.biases.set(block.attention.W_q.biases.get())
         #     block_proj.Q_k.weights.set(block.attention.W_k.weights.get())
-        #     block_proj.Q_k.biases.set(block.attention.W_k.biases.get())
         #     block_proj.Q_v.weights.set(block.attention.W_v.weights.get())
-        #     block_proj.Q_v.biases.set(block.attention.W_v.biases.get())
         #     block_proj.Q_attn_out.weights.set(block.attention.W_attn_out.weights.get())
         #     block_proj.q_attn_block.inputs_q.set(block.attention.attn_block.inputs_q.get())
         #     block_proj.q_attn_block.inputs_k.set(block.attention.attn_block.inputs_k.get())
         #     block_proj.q_attn_block.inputs_v.set(block.attention.attn_block.inputs_v.get())
-        #     block_proj.Q_attn_out.biases.set(block.attention.W_attn_out.biases.get())
         #     block_proj.Q_mlp1.weights.set(block.mlp.W_mlp1.weights.get())
-        #     block_proj.Q_mlp1.biases.set(block.mlp.W_mlp1.biases.get())
         #     block_proj.Q_mlp2.weights.set(block.mlp.W_mlp2.weights.get())
-        #     block_proj.Q_mlp2.biases.set(block.mlp.W_mlp2.biases.get())
         # self.projection.Q_out.weights.set(self.output.W_out.weights.get())
-        # self.projection.Q_out.biases.set(self.output.W_out.biases.get())
         # self.projection.q_target_Ratecell.j_td.set(jnp.zeros((self.batch_size * self.seq_len, self.vocab_size)))
 
         self.clamp_input(obs)
@@ -553,9 +546,8 @@ class NGCTransformer:
         # self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
         # self.output.e_out.dtarget.set(self.projection.eq_target.dtarget.get())
 
-        ## get projected prediction (from the P-step) -- disabled
-        # y_mu_inf = self.projection.q_target_Ratecell.z.get()
-        y_mu_inf = None
+        ## get projected prediction (from the P-step)
+        y_mu_inf = self.projection.q_target_Ratecell.z.get()
     
         EFE = 0. 
         y_mu = 0.
@@ -571,18 +563,32 @@ class NGCTransformer:
         y_mu = self.z_actfx.zF.get() 
 
         L1 = self.embedding.e_embed.L.get()
-        L4 = self.output.e_out.L.get()
         
+        L4 = self.output.e_out.L.get()
+
         block_errors = 0.
         for i in range(self.n_layers):
                 block = self.blocks[i]
-                block_errors += block.attention.e_qkv.L.get() + block.attention.e_attn.L.get() + block.mlp.e_mlp2.L.get() + block.mlp.e_mlp1.L.get()
+                L_qkv = block.attention.e_qkv.L.get()
+                L_attn = block.attention.e_attn.L.get()
+                L_mlp2 = block.mlp.e_mlp2.L.get()
+                L_mlp1 = block.mlp.e_mlp1.L.get()
+                block_errors += L_qkv + L_attn + L_mlp2 + L_mlp1
+        #         jax.debug.print("  block {i}: L_qkv={a:.8f} L_attn={b:.8f} L_mlp1={c:.8f} L_mlp2={d:.8f}", i=i, a=L_qkv, b=L_attn, c=L_mlp1, d=L_mlp2)
+        # jax.debug.print("  L_embed={a:.8f} L_out={b:.8f}", a=L1, b=L4)
 
         EFE =  block_errors + L1
 
         if adapt_synapses == True:
                 self.embedding_evolve.run()
                 self.evolve.run(t=self.T,dt=1.)
+                # Clip biases — w_bound only constrains weights, not biases
+                bias_bound = 0.5
+                for b in self.blocks:
+                    for syn in [b.attention.W_q, b.attention.W_k, b.attention.W_v,
+                                b.attention.W_attn_out, b.mlp.W_mlp1, b.mlp.W_mlp2]:
+                        syn.biases.set(jnp.clip(syn.biases.get(), -bias_bound, bias_bound))
+                self.output.W_out.biases.set(jnp.clip(self.output.W_out.biases.get(), -bias_bound, bias_bound))
 
         ## skip E/M steps if just doing test-time inference
         return y_mu, EFE
