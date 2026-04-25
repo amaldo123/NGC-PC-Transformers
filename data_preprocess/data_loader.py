@@ -27,20 +27,24 @@ class DataLoader:
 
     def _create_data_loader(self, tokens, shuffle):
         """Create sequences and return NGC DataLoader"""
-        window_size = self.seq_len + 1 
-        num_sequences = (len(tokens) - window_size + 1) // 1  
-        
+        window_size = self.seq_len + 1
+        stride = self.seq_len
+        n_tokens = len(tokens)
+        num_sequences = (n_tokens - window_size) // stride + 1
+
         if num_sequences <= 0:
             padded_tokens = jnp.concatenate([
-                tokens, 
+                tokens,
                 jnp.full((window_size - len(tokens),), self.pad_token)
             ])
-            sequences = padded_tokens.reshape(1, -1)  
-     
-        sequences = np.lib.stride_tricks.sliding_window_view(tokens, window_size)
-        
-        inputs = sequences[:, :-1]    
-        targets = sequences[:, 1:]    
+            sequences = padded_tokens.reshape(1, -1)
+        else:
+            indices = np.arange(num_sequences) * stride
+            sequences = np.array([tokens[i:i + window_size] for i in indices])
+
+
+        inputs = sequences[:, :-1]
+        targets = sequences[:, 1:]
         
         mask = (targets != self.pad_token).astype(jnp.float32)
 
