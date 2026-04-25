@@ -112,10 +112,11 @@ class NGCTransformer:
                 
                 for blocks in range(n_layers):
                     block= self.blocks[blocks]
-                    
-                    block.attention.z_qkv.zF >> block.attention.W_q.inputs
-                    block.attention.z_qkv.zF>> block.attention.W_k.inputs 
-                    block.attention.z_qkv.zF >> block.attention.W_v.inputs
+                    # attention forward
+                    block.attention.z_qkv.zF >> block.ln1.inputs
+                    block.ln1.outputs >> block.attention.W_q.inputs
+                    block.ln1.outputs >> block.attention.W_k.inputs
+                    block.ln1.outputs >> block.attention.W_v.inputs
                     
                     block.attention.W_q.outputs >> block.reshape_2d_to_3d_q.inputs 
                     block.attention.W_k.outputs >> block.reshape_2d_to_3d_k.inputs 
@@ -131,13 +132,16 @@ class NGCTransformer:
                     
                     block.attention.z_attn.zF >>block.attention.W_attn_out.inputs 
                     block.attention.W_attn_out.outputs >> block.attention.e_attn.mu
-                    block.mlp.z_mlp.z >> block.attention.e_attn.target
 
+                    if blocks == n_layers - 1:
+                        self.output.z_out.z >> block.attention.e_attn.target
+                    else:
+                        self.blocks[blocks + 1].attention.z_qkv.z >> block.attention.e_attn.target
                     
-                    block.mlp.z_mlp.zF >> block.mlp.W_mlp1.inputs
+                    #mlp forward
+                    block.mlp.z_mlp.zF  >> block.ln2.inputs
+                    block.ln2.outputs   >> block.mlp.W_mlp1.inputs
                     
-
-
                     block.mlp.W_mlp1.outputs >> block.mlp.e_mlp1.mu
                     block.mlp.z_mlp2.z >> block.mlp.e_mlp1.target
 
@@ -153,55 +157,89 @@ class NGCTransformer:
                         self.blocks[blocks + 1].attention.z_qkv.z >> block.mlp.e_mlp.target
 
 
-
-                    block.mlp.e_mlp1.dmu >> block.mlp.E_mlp1.inputs
-                    block.mlp.e_mlp.dmu  >> block.mlp.E_mlp.inputs
-
+                    # Backward attention errors 
                     block.attention.e_qkv.dmu >> block.attention.attn_block.dmu
                     
+
+                    # RMSNorm gradient corrects error before entering z_qkv
+                    #q path
+                    block.ln1.inputs          >> block.ln1_grad_q.mu
+                    block.ln1.rms               >> block.ln1_grad_q.rms
+                    block.attention.e_attn.dmu    >> block.ln1_grad_q.dmu
                     block.attention.attn_block.dq >> block.attention.E_q.inputs
+                    block.attention.E_q.outputs      >> block.ln1_grad_q.dmu_attn
+                    block.ln1_grad_q.dmu_ >> block.attention.z_qkv.jq
+ 
+                    #  K path 
+                    #block.attention.e_attn.dmu  >> block.ln1_grad_k.dmu
+                    block.ln1.inputs          >> block.ln1_grad_k.mu
+                    block.ln1.rms               >> block.ln1_grad_k.rms
+                    block.attention.e_attn.dmu    >> block.ln1_grad_k.dmu
                     block.attention.attn_block.dk >> block.attention.E_k.inputs
+                    block.attention.E_k.outputs      >> block.ln1_grad_k.dmu_attn
+                    block.ln1_grad_k.dmu_  >> block.attention.z_qkv.jk
+                    #  V path  
+                    block.ln1.inputs           >> block.ln1_grad_v.mu
+                    block.ln1.rms               >> block.ln1_grad_v.rms
+                    block.attention.e_attn.dmu    >> block.ln1_grad_v.dmu
                     block.attention.attn_block.dv >> block.attention.E_v.inputs
-                    block.attention.e_attn.dmu >> block.attention.E_attn.inputs
-                    
-                    
-                    block.attention.E_q.outputs >>block.attention.z_qkv.jq
-                    block.attention.E_k.outputs >>block.attention.z_qkv.jk
-                    block.attention.E_v.outputs >> block.attention.z_qkv.jv
+                    block.attention.E_v.outputs      >> block.ln1_grad_v.dmu_attn
+                    block.ln1_grad_v.dmu_ >> block.attention.z_qkv.jv
+
+                    # e_attn → E_attn → z_attn.j  (no ln on this path)
+                    block.attention.e_attn.dmu     >> block.attention.E_attn.inputs
                     block.attention.E_attn.outputs >> block.attention.z_attn.j
-
-
+ 
+                    # top-down error into z_qkv
                     if blocks == 0:
                         self.embedding.e_embed.dtarget >> block.attention.z_qkv.j_td
                     else:
                         self.blocks[blocks - 1].mlp.e_mlp.dtarget >> block.attention.z_qkv.j_td
                     block.attention.e_qkv.dtarget >> block.attention.z_attn.j_td
 
-                    block.mlp.E_mlp.outputs  >> block.mlp.z_mlp2.j
-                    block.mlp.E_mlp1.outputs >> block.mlp.z_mlp.j
+                    #  Backward MLP errors 
+                    #block.mlp.e_mlp1.dmu >> block.mlp.E_mlp1.inputs
+                    
+                    #block.mlp.e_mlp.dmu  >> block.mlp.E_mlp.inputs
+ 
+                    # E_mlp output -> ln2_grad -> z_mlp.j
+                    block.ln2.rms >> block.ln2_grad.rms
+                    block.mlp.z_mlp.zF >> block.ln2_grad.mu # dummy connection to carry activations for attention modulation (not wired in this design)
+                     
+
+                    # E_mlp1 — backward signal for z_mlp2 state 
+                    block.mlp.e_mlp1.dmu     >> block.mlp.E_mlp1.inputs  # (18,64) → E_mlp1(64,16)
+                    block.mlp.E_mlp1.outputs >> block.ln2_grad.dmu
+                    block.ln2_grad.dmu_ >> block.mlp.z_mlp.j
+
+                    # E_mlp — backward signal for z_mlp2 from output error
+                    block.mlp.e_mlp.dmu      >> block.mlp.E_mlp.inputs   # (18,16) → E_mlp(16,64)
+                    block.mlp.E_mlp.outputs  >> block.mlp.z_mlp2.j 
 
                     block.attention.e_attn.dtarget >> block.mlp.z_mlp.j_td
-                    block.mlp.e_mlp1.dtarget >> block.mlp.z_mlp2.j_td
+                    block.mlp.e_mlp1.dtarget       >> block.mlp.z_mlp2.j_td
 
 
-                    block.attention.z_qkv.zF >> block.attention.W_q.pre
-                    block.attention.attn_block.dq >> block.attention.W_q.post
+                    #  Hebbian pre/post wiring 
+                    block.ln1.outputs       >> block.attention.W_q.pre
+                    block.ln1_grad_q.dmu_mlp1   >> block.attention.W_q.post
+ 
+                    block.ln1.outputs       >> block.attention.W_k.pre
+                    block.ln1_grad_k.dmu_mlp1   >> block.attention.W_k.post
+ 
+                    block.ln1.outputs       >> block.attention.W_v.pre
+                    block.ln1_grad_v.dmu_mlp1  >> block.attention.W_v.post
+ 
+                    block.attention.z_attn.zF    >> block.attention.W_attn_out.pre
+                    block.attention.e_attn.dmu   >> block.attention.W_attn_out.post
+ 
+                    block.ln2.outputs       >> block.mlp.W_mlp1.pre
+                    #block.ln2_grad.dmu_      >> block.mlp.W_mlp1.pre
+                    block.mlp.e_mlp1.dmu     >> block.mlp.W_mlp1.post
+ 
+                    block.mlp.z_mlp2.zF     >> block.mlp.W_mlp2.pre
+                    block.mlp.e_mlp.dmu     >> block.mlp.W_mlp2.post
 
-                    block.attention.z_qkv.zF >> block.attention.W_k.pre
-                    block.attention.attn_block.dk >> block.attention.W_k.post
-
-                    block.attention.z_qkv.zF >> block.attention.W_v.pre
-                    block.attention.attn_block.dv >> block.attention.W_v.post
-
-                    block.attention.z_attn.zF >> block.attention.W_attn_out.pre
-                    block.attention.e_attn.dmu >> block.attention.W_attn_out.post
-
-
-                    block.mlp.z_mlp.zF  >> block.mlp.W_mlp1.pre
-                    block.mlp.e_mlp1.dmu >> block.mlp.W_mlp1.post
-
-                    block.mlp.z_mlp2.zF >> block.mlp.W_mlp2.pre
-                    block.mlp.e_mlp.dmu  >> block.mlp.W_mlp2.post
 
                         
                 self.output.z_out.zF >> self.output.W_out.inputs
@@ -220,6 +258,9 @@ class NGCTransformer:
 
                 self.embedding.e_embed.dmu >> self.reshape_2d_to_3d_embed.inputs
                 self.reshape_2d_to_3d_embed.outputs >> self.embedding.W_embed.post
+ 
+                self.output.z_out.zF            >> self.output.W_out.pre
+                self.Outgrad.dmu_               >> self.output.W_out.post
 
 
                 self.output.z_out.zF >> self.output.W_out.pre
@@ -276,19 +317,26 @@ class NGCTransformer:
                 embedding_evolve_process  >> self.embedding.W_embed.evolve
 
 
-                ## ========================================================================
-                ##   z_embed >> W_embed >> reshape_3d_to_2d >> e_embed >> reshape_2d_to_3d
-                ## ========================================================================
+                # ADVANCE PROCESS 
+                #embedding
                 advance_process >> self.embedding.z_embed.advance_state
                 advance_process >> self.embedding.W_embed.advance_state
                 advance_process >> self.reshape_3d_to_2d_embed.advance_state
                 advance_process >> self.embedding.e_embed.advance_state
                 advance_process >> self.reshape_2d_to_3d_embed.advance_state
 
+                # transformer blocks
                 for i in range(n_layers):
                     block = self.blocks[i]
                     
+                    # z nodes
                     advance_process >> block.attention.z_qkv.advance_state
+                    advance_process >> block.attention.z_attn.advance_state
+                    advance_process >> block.mlp.z_mlp.advance_state
+                    advance_process >> block.mlp.z_mlp2.advance_state
+
+                    # Wsynapse nodes  
+                    advance_process >> block.ln1.advance_state
                     advance_process >> block.attention.W_q.advance_state
                     advance_process >> block.attention.W_k.advance_state
                     advance_process >> block.attention.W_v.advance_state
@@ -297,34 +345,55 @@ class NGCTransformer:
                     advance_process >> block.reshape_2d_to_3d_v.advance_state
                     advance_process >> block.attention.attn_block.advance_state
                     advance_process >> block.reshape_3d_to_2d.advance_state
-                    advance_process >> block.attention.e_qkv.advance_state
-                    advance_process >> block.attention.e_attn.advance_state
+                    advance_process >> block.reshape_3d_to_2d_attnout.advance_state
+                    advance_process >> block.attention.W_attn_out.advance_state
                     advance_process >> block.attention.E_q.advance_state
                     advance_process >> block.attention.E_k.advance_state
                     advance_process >> block.attention.E_v.advance_state
-
-
-                    advance_process >> block.attention.z_attn.advance_state
-                    advance_process >> block.attention.W_attn_out.advance_state
                     advance_process >> block.attention.E_attn.advance_state
-                    
-                    
-                    advance_process >> block.mlp.z_mlp.advance_state
+                    advance_process >> block.ln1_grad_q.advance_state
+                    advance_process >> block.ln1_grad_k.advance_state
+                    advance_process >> block.ln1_grad_v.advance_state
+                    #advance_process >> block.ln1_grad.advance_state   # backward norm
+                    advance_process >> block.ln2.advance_state
                     advance_process >> block.mlp.W_mlp1.advance_state
-                    advance_process >> block.mlp.e_mlp1.advance_state
-                    advance_process >> block.mlp.E_mlp1.advance_state
-
-                    advance_process >> block.mlp.z_mlp2.advance_state
                     advance_process >> block.mlp.W_mlp2.advance_state
-                    advance_process >> block.mlp.e_mlp.advance_state
+                    advance_process >> block.mlp.E_mlp1.advance_state
                     advance_process >> block.mlp.E_mlp.advance_state
-                   
-                   
-                    reset_process >> block.attention.attn_block.reset
-                    reset_process >> block.attention.W_v.reset
-                    reset_process >> block.attention.W_k.reset
-                    reset_process >> block.attention.W_q.reset
-                    reset_process >> block.attention.W_attn_out.reset
+                    advance_process >> block.ln2_grad.advance_state   # backward norm
+
+                    # e nodes
+                    advance_process >> block.attention.e_qkv.advance_state
+                    advance_process >> block.attention.e_attn.advance_state
+                    advance_process >> block.mlp.e_mlp1.advance_state
+                    advance_process >> block.mlp.e_mlp.advance_state
+
+                # output layers
+                advance_process >> self.output.z_out.advance_state
+                advance_process >> self.z_target.advance_state
+                advance_process >> self.output.W_out.advance_state
+                advance_process >> self.Outgrad.advance_state
+                advance_process >> self.output.E_out.advance_state
+                advance_process >> self.z_actfx.advance_state
+                advance_process >> self.output.e_out.advance_state
+
+                # RESET PROCESS
+
+                # embedding 
+                reset_process >> self.embedding.z_embed.reset
+                reset_process >> self.embedding.e_embed.reset
+                reset_process >> self.reshape_3d_to_2d_embed.reset
+                reset_process >> self.reshape_2d_to_3d_embed.reset
+
+                # transformer blocks 
+                for i in range(n_layers):
+                    block = self.blocks[i]
+
+                    reset_process >> block.ln1.reset
+                    reset_process >> block.ln1_grad_q.reset
+                    reset_process >> block.ln1_grad_k.reset
+                    reset_process >> block.ln1_grad_v.reset
+                    #reset_process >> block.ln1_grad.reset
                     reset_process >> block.attention.z_qkv.reset
                     reset_process >> block.attention.z_attn.reset
                     reset_process >> block.attention.e_qkv.reset
@@ -340,7 +409,41 @@ class NGCTransformer:
                     reset_process >> block.reshape_2d_to_3d_k.reset
                     reset_process >> block.reshape_2d_to_3d_v.reset
                     reset_process >> block.reshape_3d_to_2d_attnout.reset
-            
+                    reset_process >> block.ln2.reset
+                    reset_process >> block.ln2_grad.reset
+                    reset_process >> block.mlp.z_mlp.reset
+                    reset_process >> block.mlp.z_mlp2.reset
+                    reset_process >> block.mlp.e_mlp.reset
+                    reset_process >> block.mlp.e_mlp1.reset
+                
+                # output
+                reset_process >> self.output.z_out.reset
+                reset_process >> self.z_target.reset
+                reset_process >> self.z_actfx.reset
+                reset_process >> self.output.e_out.reset
+                reset_process >> self.output.W_out.reset
+                reset_process >> self.Outgrad.reset
+
+                # projection network 
+                reset_process >> self.projection.q_embed_Ratecell.reset
+                reset_process >> self.projection.q_out_Ratecell.reset
+                reset_process >> self.projection.q_target_Ratecell.reset
+                reset_process >> self.projection.eq_target.reset
+
+                for b in range(n_layers):
+                    block_proj = self.projection.blocks[b]
+                    reset_process >> block_proj.q_qkv_Ratecell.reset
+                    reset_process >> block_proj.q_attn_block.reset
+                    reset_process >> block_proj.q_attn_Ratecell.reset
+                    reset_process >> block_proj.q_mlp_Ratecell.reset
+                    reset_process >> block_proj.q_mlp2_Ratecell.reset
+
+                
+                # EVOLVE PROCESS
+
+                for i in range(n_layers):
+                    block = self.blocks[i]
+
                     evolve_process >> block.attention.W_q.evolve
                     evolve_process >> block.attention.W_k.evolve
                     evolve_process >> block.attention.W_v.evolve
@@ -376,11 +479,14 @@ class NGCTransformer:
                 reset_process >> self.Outgrad.reset
 
                 evolve_process >> self.output.W_out.evolve
+
+                # PROJECT PROCESS Q / inference network 
                 project_process >> self.projection.q_embed_Ratecell.advance_state
                 project_process >> self.projection.Q_embed.advance_state
                 project_process >> self.projection.reshape_3d_to_2d_proj.advance_state
+
                 for b in range(n_layers):
-                    block_proj= self.projection.blocks[b]
+                    block_proj = self.projection.blocks[b]
                     project_process >> block_proj.q_qkv_Ratecell.advance_state
                     project_process >> block_proj.Q_q.advance_state
                     project_process >> block_proj.Q_k.advance_state
@@ -528,7 +634,7 @@ class NGCTransformer:
             block_proj.reshape_3d_to_2d_proj1.outputs.set(self.circuit.get_components(f"{p_prefix}_reshape_3d_to_2d_proj1").outputs.get())
             block_proj.q_attn_block = self.circuit.get_components(f"{p_prefix}_q_attn_block")
           
-
+    
     def process(self, obs, lab, adapt_synapses=True):
 
         # ══════  Inference  ════════════════════════════════════════
@@ -566,8 +672,30 @@ class NGCTransformer:
         ## ════════════════════════════════════════════════════════════════════════════════
         self.clamp_input(obs)
         self.clamp_infer_target(lab)
-        self.project.run(t=0., dt=1.)
+        
+        #self.project.run(t=0., dt=1.)
 
+
+        for i in range(self.n_layers):
+        #     block_proj= self.projection.blocks[i]   
+            b= self.blocks[i]
+        #     b.attention.z_qkv.z.set(block_proj.q_qkv_Ratecell.z.get())
+        #     b.mlp.z_mlp.z.set(block_proj.q_mlp_Ratecell.z.get())
+        #     b.mlp.z_mlp2.z.set(block_proj.q_mlp2_Ratecell.z.get())
+            b.attention.E_q.weights.set(jnp.transpose(b.attention.W_q.weights.get()))
+            b.attention.E_k.weights.set(jnp.transpose(b.attention.W_k.weights.get()))
+            b.attention.E_v.weights.set(jnp.transpose(b.attention.W_v.weights.get()))
+            b.attention.E_attn.weights.set(jnp.transpose(b.attention.W_attn_out.weights.get()))
+            b.mlp.E_mlp.weights.set(jnp.transpose(b.mlp.W_mlp2.weights.get()))  
+            b.mlp.E_mlp1.weights.set(jnp.transpose(b.mlp.W_mlp1.weights.get()))
+            #b.mlp.E_mlp1.weights.set(b.mlp.W_mlp1.weights.get())
+       
+        self.output.E_out.weights.set(jnp.transpose(self.output.W_out.weights.get()))
+        # self.output.z_out.z.set(self.projection.q_out_Ratecell.z.get())
+        # self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
+        # self.output.e_out.dtarget.set(self.projection.eq_target.dtarget.get())
+        
+        
         ## get projected prediction (from the P-step)
         y_mu_inf = self.projection.q_target_Ratecell.zF.get()
 
