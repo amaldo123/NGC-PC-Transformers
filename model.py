@@ -159,7 +159,7 @@ class NGCTransformer:
 
                     # RMSNorm gradient corrects error before entering z_qkv
                     #q path
-                    block.ln1.inputs          >> block.ln1_grad_q.mu
+                    block.attention.z_qkv.zF    >> block.ln1_grad_q.mu
                     block.ln1.rms               >> block.ln1_grad_q.rms
                     block.attention.e_attn.dmu    >> block.ln1_grad_q.dmu
                     block.attention.attn_block.dq >> block.attention.E_q.inputs
@@ -168,14 +168,14 @@ class NGCTransformer:
  
                     #  K path 
                     #block.attention.e_attn.dmu  >> block.ln1_grad_k.dmu
-                    block.ln1.inputs          >> block.ln1_grad_k.mu
+                    block.attention.z_qkv.zF  >> block.ln1_grad_k.mu
                     block.ln1.rms               >> block.ln1_grad_k.rms
                     block.attention.e_attn.dmu    >> block.ln1_grad_k.dmu
                     block.attention.attn_block.dk >> block.attention.E_k.inputs
                     block.attention.E_k.outputs      >> block.ln1_grad_k.dmu_attn
                     block.ln1_grad_k.dmu_  >> block.attention.z_qkv.jk
                     #  V path  
-                    block.ln1.inputs           >> block.ln1_grad_v.mu
+                    block.attention.z_qkv.zF            >> block.ln1_grad_v.mu
                     block.ln1.rms               >> block.ln1_grad_v.rms
                     block.attention.e_attn.dmu    >> block.ln1_grad_v.dmu
                     block.attention.attn_block.dv >> block.attention.E_v.inputs
@@ -347,7 +347,6 @@ class NGCTransformer:
                     advance_process >> block.ln1_grad_q.advance_state
                     advance_process >> block.ln1_grad_k.advance_state
                     advance_process >> block.ln1_grad_v.advance_state
-                    #advance_process >> block.ln1_grad.advance_state   # backward norm
                     advance_process >> block.ln2.advance_state
                     advance_process >> block.mlp.W_mlp1.advance_state
                     advance_process >> block.mlp.W_mlp2.advance_state
@@ -582,25 +581,6 @@ class NGCTransformer:
           
     
     def process(self, obs, lab, adapt_synapses=True):
-        # print("obs shape:", obs.shape)
-        # print("E_mlp1 weights shape:", self.blocks[0].mlp.E_mlp1.weights.get().shape)
-        # print("E_mlp weights shape:", self.blocks[0].mlp.E_mlp.weights.get().shape)
-        # print("E_mlp1 weights:", self.blocks[0].mlp.E_mlp1.weights.get().shape)
-        # print("E_mlp weights:", self.blocks[0].mlp.E_mlp.weights.get().shape)
-        # print("E_q weights:", self.blocks[0].attention.E_q.weights.get().shape)
-        # print("E_k weights:", self.blocks[0].attention.E_k.weights.get().shape)
-        # print("E_v weights:", self.blocks[0].attention.E_v.weights.get().shape)
-        # print("E_attn weights:", self.blocks[0].attention.E_attn.weights.get().shape)
-        # print("E_out weights:", self.output.E_out.weights.get().shape)
-        # print("ln2 inputs shape:", self.blocks[0].ln2.inputs.get().shape)
-        # print("ln2 outputs shape:", self.blocks[0].ln2.outputs.get().shape)
-        # print("W_mlp1 inputs shape:", self.blocks[0].mlp.W_mlp1.inputs.get().shape)
-        # print("z_mlp zF shape:", self.blocks[0].mlp.z_mlp.zF.get().shape)
-        # print("ln1_grad_q dmu_attn:", self.blocks[0].ln1_grad_q.dmu_attn.get().shape)
-        # print("ln1_grad_q dmu:", self.blocks[0].ln1_grad_q.dmu.get().shape)
-        # print("ln2_grad dmu:", self.blocks[0].ln2_grad.dmu.get().shape)
-        # print("ln2_grad dmu_attn:", self.blocks[0].ln2_grad.dmu_attn.get().shape)
-        # print("ln2_grad mu:", self.blocks[0].ln2_grad.mu.get().shape)
         self.reset.run()
         # self.projection.Q_embed.word_weights.set(self.embedding.W_embed.word_weights.get())
         # if self.embedding.W_embed.pos_learnable:
@@ -647,7 +627,6 @@ class NGCTransformer:
             b.attention.E_attn.weights.set(jnp.transpose(b.attention.W_attn_out.weights.get()))
             b.mlp.E_mlp.weights.set(jnp.transpose(b.mlp.W_mlp2.weights.get()))  
             b.mlp.E_mlp1.weights.set(jnp.transpose(b.mlp.W_mlp1.weights.get()))
-            #b.mlp.E_mlp1.weights.set(b.mlp.W_mlp1.weights.get())
        
         self.output.E_out.weights.set(jnp.transpose(self.output.W_out.weights.get()))
         # self.output.z_out.z.set(self.projection.q_out_Ratecell.z.get())
