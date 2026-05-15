@@ -21,10 +21,10 @@ class MLP:
         self.z_mlp1 = ClippedRateCell(f"{prefix}z_mlp1", n_units=n_embed, tau_m=tau_m, act_fx="identity", batch_size=batch_size * seq_len, prior=("gaussian", 0.1))
         self.z_mlp2 = ClippedRateCell(f"{prefix}z_mlp2", n_units= 4* n_embed, tau_m= tau_m, act_fx="gelu", batch_size=batch_size * seq_len, prior=("gaussian", 0.1))
         
-        self.W_mlp1 = HebbianSynapse(f"{prefix}W_mlp1", shape=(n_embed, 4*n_embed), batch_size = batch_size * seq_len, eta=eta, weight_init=dist.uniform(amin=wlb, amax=wub),
+        self.W_mlp1 = HebbianSynapse(f"{prefix}W_mlp1", shape=(n_embed, 4*n_embed), batch_size = batch_size * seq_len, eta=eta, weight_init=dist.gaussian(mean=0.0, std=0.02),
                     bias_init=dist.constant(value=0.), w_bound=0.5, optim_type=optim_type, sign_value=-1.0, key=subkeys[4],prior=("l1l2", (0.01, 0.01)))
         self.W_mlp2 = HebbianSynapse(
-                    f"{prefix}W_mlp2", shape=(4*n_embed, n_embed), batch_size= batch_size * seq_len, eta=eta, weight_init=dist.uniform(amin=wlb, amax=wub),
+                    f"{prefix}W_mlp2", shape=(4*n_embed, n_embed), batch_size= batch_size * seq_len, eta=eta, weight_init=dist.gaussian(mean=0.0, std=0.02),
                     bias_init=dist.constant(value=0.), w_bound=0.5, optim_type=optim_type, sign_value=-1.0, key=subkeys[5],prior=("l1l2", (0.01, 0.01)))
         self.e_mlp2 = ErrorCell(f"{prefix}e_mlp2", n_units=n_embed,
                                   batch_size=batch_size * seq_len) # shape=(seq_len, n_embed, 1),
@@ -32,8 +32,8 @@ class MLP:
                                   batch_size=batch_size * seq_len)
         
         
-        self.E_mlp1 = StaticSynapse(f"{prefix}E_mlp1", shape=(4 * n_embed,n_embed), weight_init=dist.uniform(low=wlb, high=wub), key=subkeys[4])
-        self.E_mlp2 = StaticSynapse(f"{prefix}E_mlp2", shape=(n_embed, 4 * n_embed), weight_init=dist.uniform(low=wlb, high=wub), key=subkeys[4])
+        self.E_mlp1 = StaticSynapse(f"{prefix}E_mlp1", shape=(4 * n_embed,n_embed), weight_init=dist.gaussian(mean=0.0, std=0.02), key=subkeys[4])
+        self.E_mlp2 = StaticSynapse(f"{prefix}E_mlp2", shape=(n_embed, 4 * n_embed), weight_init=dist.gaussian(mean=0.0, std=0.02), key=subkeys[4])
     def get_components(self):
         """Return all components for easy access"""
         return {

@@ -39,17 +39,17 @@ class Attention:
                             act_fx="identity", batch_size=batch_size * seq_len, prior=("gaussian", 0.1) )
         
         self.W_q = HebbianSynapse(f"{prefix}W_q", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                                weight_init=dist.uniform(amin=wlb, amax=wub),
+                                weight_init=dist.gaussian(mean=0.0, std=0.02),
                                 bias_init=dist.constant(value=0.), w_bound=0.5,
                                 optim_type=optim_type, sign_value= -1.0, key=subkeys[0],prior=("l1l2", (0.01, 0.01)))
 
         self.W_k = HebbianSynapse(f"{prefix}W_k", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                                weight_init=dist.uniform(amin=wlb, amax=wub),
+                                weight_init=dist.gaussian(mean=0.0, std=0.02),
                                 bias_init=dist.constant(value=0.), w_bound=0.5,
                                 optim_type=optim_type, sign_value= -1.0, key=subkeys[1],prior=("l1l2", (0.01, 0.01)))
 
         self.W_v = HebbianSynapse(f"{prefix}W_v", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                                weight_init=dist.uniform(amin=wlb, amax=wub),
+                                weight_init=dist.gaussian(mean=0.0, std=0.02),
                                 bias_init=dist.constant(value=0.), w_bound=0.5,
                                 optim_type=optim_type, sign_value= -1.0, key=subkeys[2],prior=("l1l2", (0.01, 0.01)))
        
@@ -59,7 +59,7 @@ class Attention:
                                        batch_size=batch_size)
         
         self.W_attn_out = HebbianSynapse(f"{prefix}W_attn_out", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                            weight_init=dist.uniform(amin=wlb, amax=wub),
+                            weight_init=dist.gaussian(mean=0.0, std=0.02),
                             bias_init=dist.constant(value=0.), w_bound=0.5,
                             optim_type=optim_type, sign_value= -1.0, key=subkeys[3])
         self.e_qkv = ErrorCell(f"{prefix}e_qkv", n_units=n_embed, batch_size=batch_size * seq_len) 
@@ -67,10 +67,10 @@ class Attention:
                                   batch_size=batch_size * seq_len) # shape=(seq_len, n_embed, 1),
         
         self.E_q = StaticSynapse(f"{prefix}E_q", shape=(n_embed, n_embed),
-                        weight_init=dist.uniform(low=wlb, high=wub),  key=subkeys[4])
+                        weight_init=dist.gaussian(mean=0.0, std=0.02),  key=subkeys[4])
         self.E_k = StaticSynapse(f"{prefix}E_k", shape=(n_embed, n_embed),
-                        weight_init=dist.uniform(low=wlb, high=wub),  key=subkeys[5])
+                        weight_init=dist.gaussian(mean=0.0, std=0.02),  key=subkeys[5])
         self.E_v = StaticSynapse(f"{prefix}E_v", shape=(n_embed, n_embed),
-                        weight_init=dist.uniform(low=wlb, high=wub),  key=subkeys[6])
+                        weight_init=dist.gaussian(mean=0.0, std=0.02),  key=subkeys[6])
         self.E_attn = StaticSynapse(f"{prefix}E_attn", shape=(n_embed, n_embed),
-                        weight_init=dist.uniform(low=wlb, high=wub),  key=subkeys[7])
+                        weight_init=dist.gaussian(mean=0.0, std=0.02),  key=subkeys[7])
