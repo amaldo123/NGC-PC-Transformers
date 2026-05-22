@@ -206,7 +206,7 @@ class NGCTransformer:
                 self.z_actfx.zF >> self.output.e_out.mu
                 self.z_target.z >> self.output.e_out.target
 
-                self.output.e_out.dmu >> self.output.E_out.inputs
+                self.output.e_out.dtarget >> self.output.E_out.inputs
 
 
                 self.output.E_out.outputs >> self.output.z_out.j
@@ -218,7 +218,7 @@ class NGCTransformer:
 
 
                 self.output.z_out.zF >> self.output.W_out.pre
-                self.output.e_out.dmu >> self.output.W_out.post
+                self.output.e_out.dtarget >> self.output.W_out.post
 
                         
                         
