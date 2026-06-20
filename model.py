@@ -565,16 +565,21 @@ class NGCTransformer:
         self.clamp_target(lab)
 
         if getattr(config, "fused_advance", True):
-            advance_fn = self.advance.run.compiled
-            state = global_state_manager.state
-            kwargs = jnp.full((self.T,), 1.0, dtype=jnp.float32)
+            # Run first step normally to warm up state shapes (some compartments
+            # initialize with batch_size=1 placeholders that expand on first run)
+            self.advance.run(t=0, dt=1.)
 
-            def scan_fn(ctx, dt):
-                new_ctx, _ = advance_fn(ctx, [dt])
-                return new_ctx, None
+            if self.T > 1:
+                advance_fn = self.advance.run.compiled
+                state = global_state_manager.state
+                kwargs = jnp.full((self.T - 1,), 1.0, dtype=jnp.float32)
 
-            final_state, _ = jax.lax.scan(scan_fn, state, kwargs)
-            global_state_manager.set_state(final_state)
+                def scan_fn(ctx, dt):
+                    new_ctx, _ = advance_fn(ctx, [dt])
+                    return new_ctx, None
+
+                final_state, _ = jax.lax.scan(scan_fn, state, kwargs)
+                global_state_manager.set_state(final_state)
         else:
             for ts in range(0, self.T):
                 self.clamp_input(obs)
