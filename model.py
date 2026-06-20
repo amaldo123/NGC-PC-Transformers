@@ -394,8 +394,11 @@ class NGCTransformer:
                 self.project = project_process
                 self.embedding_evolve=embedding_evolve_process
 
-        if getattr(config, "fused_advance", True):
+        _on_gpu = jax.default_backend() == "gpu"
+        if getattr(config, "fused_advance", True) and not _on_gpu:
             print("\nUsing fused advance loop (jax.lax.scan)")
+        elif _on_gpu:
+            print("\nGPU detected: using normal for-loop advance")
         else:
             print("\nUsing normal for-loop advance")
 
@@ -564,7 +567,9 @@ class NGCTransformer:
         self.clamp_input(obs)
         self.clamp_target(lab)
 
-        if getattr(config, "fused_advance", True):
+        on_gpu = jax.default_backend() == "gpu"
+
+        if getattr(config, "fused_advance", True) and not on_gpu:
             advance_fn = self.advance.run.compiled
             state = global_state_manager.state
             kwargs = jnp.full((self.T,), 1.0, dtype=jnp.float32)
