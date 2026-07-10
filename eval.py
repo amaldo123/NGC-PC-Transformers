@@ -25,7 +25,7 @@ def eval_model(model: NGCTransformer, data_loader, vocab_size: int):
         targets = batch[1][1]
 
         targets_flat = jax.nn.one_hot(targets.flatten(), vocab_size)
-        _, y_mu, EFE = model.process(obs=inputs,
+        _, y_mu, EFE, L1, L2, L3, L4, L5 = model.process(obs=inputs,
                                    lab=targets_flat,
                                    adapt_synapses=False)
 

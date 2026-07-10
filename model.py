@@ -105,8 +105,7 @@ class NGCTransformer:
                 ##        z_embed >> W_embed >> reshape_3d_to_2d_embed >> e_embed
                 ## ========================================================================
                 self.embedding.z_embed.zF   >> self.embedding.W_embed.inputs
-                self.embedding.W_embed.outputs >> self.reshape_3d_to_2d_embed.inputs  
-                self.reshape_3d_to_2d_embed.outputs >> self.embedding.e_embed.mu
+                self.embedding.W_embed.outputs >> self.embedding.e_embed.mu
                 
                 self.blocks[0].attention.z_qkv.z >> self.embedding.e_embed.target
                 
@@ -117,16 +116,13 @@ class NGCTransformer:
                     block.attention.z_qkv.zF>> block.attention.W_k.inputs 
                     block.attention.z_qkv.zF >> block.attention.W_v.inputs
                     
-                    block.attention.W_q.outputs >> block.reshape_2d_to_3d_q.inputs 
-                    block.attention.W_k.outputs >> block.reshape_2d_to_3d_k.inputs 
-                    block.attention.W_v.outputs >> block.reshape_2d_to_3d_v.inputs 
-                    
-                    block.reshape_2d_to_3d_q.outputs >> block.attention.attn_block.inputs_q
-                    block.reshape_2d_to_3d_k.outputs >> block.attention.attn_block.inputs_k
-                    block.reshape_2d_to_3d_v.outputs >> block.attention.attn_block.inputs_v
-                    block.attention.attn_block.outputs >> block.reshape_3d_to_2d.inputs
-
-                    block.reshape_3d_to_2d.outputs >> block.attention.e_qkv.mu
+                    block.attention.W_q.outputs >> block.attention.attn_block.inputs_q
+                    block.attention.W_k.outputs >> block.attention.attn_block.inputs_k
+                    block.attention.W_v.outputs >> block.attention.attn_block.inputs_v
+                    # block.reshape_2d_to_3d_q.outputs >>
+                    # block.reshape_2d_to_3d_k.outputs >> 
+                    # block.reshape_2d_to_3d_v.outputs >> 
+                    block.attention.attn_block.outputs >> block.attention.e_qkv.mu
                     block.attention.z_attn.z >> block.attention.e_qkv.target
                     
                     block.attention.z_attn.zF >>block.attention.W_attn_out.inputs 
@@ -218,8 +214,7 @@ class NGCTransformer:
                 self.blocks[self.n_layers - 1].mlp.e_mlp.dtarget >> self.output.z_out.j_td
 
 
-                self.embedding.e_embed.dmu >> self.reshape_2d_to_3d_embed.inputs
-                self.reshape_2d_to_3d_embed.outputs >> self.embedding.W_embed.post
+                self.embedding.e_embed.dmu >> self.embedding.W_embed.post
 
 
                 self.output.z_out.zF >> self.output.W_out.pre
@@ -600,21 +595,28 @@ class NGCTransformer:
         y_mu = self.z_actfx.zF.get() 
 
         L1 = self.embedding.e_embed.L.get()
-        L4 = self.output.e_out.L.get()
+        
+        L1 = self.embedding.e_embed.L.get()
+        L6 = self.output.e_out.L.get()
         
         block_errors = 0.
-        for i in range(self.n_layers):
-                block = self.blocks[i]
-                block_errors += block.attention.e_attn.L.get() + block.mlp.e_mlp.L.get() + block.mlp.e_mlp1.L.get()
-
-        EFE = block_errors + L1
+        block = self.blocks[self.n_layers -1]
+        # for i in range(self.n_layers):
+        #         block = self.blocks[i]
+        #         if i == self.n_layers -1:
+        #          block_errors += block.attention.e_attn.L.get() + block.mlp.e_mlp.L.get() + block.mlp.e_mlp1.L.get()
+        L2 = block.attention.e_qkv.L.get()
+        L3 = block.attention.e_attn.L.get()
+        L4= block.mlp.e_mlp1.L.get()
+        L5 = block.mlp.e_mlp.L.get()
+        EFE = L2 + L3 + L4 + L1 + L5
 
         if adapt_synapses == True:
                 self.embedding_evolve.run()
                 self.evolve.run(t=self.T,dt=1.)
                 
         ## skip E/M steps if just doing test-time inference
-        return y_mu_inf, y_mu, EFE 
+        return y_mu_inf, y_mu, EFE, L1, L2, L3, L4, L5 
 
     def count_parameters(self):
         """Count total number of learnable parameters in the model."""
