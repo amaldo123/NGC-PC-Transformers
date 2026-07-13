@@ -525,74 +525,81 @@ class NGCTransformer:
           
 
     def process(self, obs, lab, adapt_synapses=True):
-        
+
+        # ══════  Inference  ════════════════════════════════════════
+        #####     Reset
         self.reset.run()
-        # self.projection.Q_embed.word_weights.set(self.embedding.W_embed.word_weights.get())
-        # if self.embedding.W_embed.pos_learnable:
-        #    self.projection.Q_embed.pos_weights.set(self.embedding.W_embed.pos_weights.get())
-        # for i in range(self.n_layers):
-        #     block_proj= self.projection.blocks[i]
-        #     block= self.blocks[i] 
-        #     block_proj.Q_q.weights.set(block.attention.W_q.weights.get())
-        #     block_proj.Q_q.biases.set(block.attention.W_q.biases.get())
-        #     block_proj.Q_k.weights.set(block.attention.W_k.weights.get())
-        #     block_proj.Q_k.biases.set(block.attention.W_k.biases.get())
-        #     block_proj.Q_v.weights.set(block.attention.W_v.weights.get())
-        #     block_proj.Q_v.biases.set(block.attention.W_v.biases.get())
-        #     block_proj.Q_attn_out.weights.set(block.attention.W_attn_out.weights.get())
-        #     # block_proj.q_attn_block.inputs_q.set(block.attention.attn_block.inputs_q.get())
-        #     # block_proj.q_attn_block.inputs_k.set(block.attention.attn_block.inputs_k.get())
-        #     # block_proj.q_attn_block.inputs_v.set(block.attention.attn_block.inputs_v.get())
-        #     block_proj.Q_attn_out.biases.set(block.attention.W_attn_out.biases.get())
-        #     block_proj.Q_mlp1.weights.set(block.mlp.W_mlp1.weights.get())
-        #     block_proj.Q_mlp1.biases.set(block.mlp.W_mlp1.biases.get())
-        #     block_proj.Q_mlp2.weights.set(block.mlp.W_mlp2.weights.get())
-        #     block_proj.Q_mlp2.biases.set(block.mlp.W_mlp2.biases.get())
 
-        # self.projection.Q_out.weights.set(self.output.W_out.weights.get())
-        # self.projection.Q_out.biases.set(self.output.W_out.biases.get())
-        # self.projection.q_target_Ratecell.j_td.set(jnp.zeros((self.batch_size * self.seq_len, self.vocab_size)))
-        
-       
-        self.clamp_input(obs)
-        # self.clamp_infer_target(lab)
-        
-        # self.project.run(t=0., dt=1.)
-
-
+        ## ════════════════════════════════════════════════════════════════════════════════
+        self.projection.Q_embed.word_weights.set(self.embedding.W_embed.word_weights.get())
+        if self.embedding.W_embed.pos_learnable:
+           self.projection.Q_embed.pos_weights.set(self.embedding.W_embed.pos_weights.get())
+        ## --------------------------------------------------------------
         for i in range(self.n_layers):
-        #     block_proj= self.projection.blocks[i]   
-            b= self.blocks[i]
-        #     b.attention.z_qkv.z.set(block_proj.q_qkv_Ratecell.z.get())
-        #     b.mlp.z_mlp.z.set(block_proj.q_mlp_Ratecell.z.get())
-        #     b.mlp.z_mlp2.z.set(block_proj.q_mlp2_Ratecell.z.get())
-            b.attention.E_q.weights.set(jnp.transpose(b.attention.W_q.weights.get()))
-            b.attention.E_k.weights.set(jnp.transpose(b.attention.W_k.weights.get()))
-            b.attention.E_v.weights.set(jnp.transpose(b.attention.W_v.weights.get()))
-            b.attention.E_attn.weights.set(jnp.transpose(b.attention.W_attn_out.weights.get()))
-            b.mlp.E_mlp.weights.set(jnp.transpose(b.mlp.W_mlp2.weights.get()))  
-            b.mlp.E_mlp1.weights.set(jnp.transpose(b.mlp.W_mlp1.weights.get()))
-       
-        self.output.E_out.weights.set(jnp.transpose(self.output.W_out.weights.get()))
-        # self.output.z_out.z.set(self.projection.q_out_Ratecell.z.get())
-        # self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
-        # self.output.e_out.dtarget.set(self.projection.eq_target.dtarget.get())
-        
-        
+            block= self.blocks[i]
+            block_proj= self.projection.blocks[i]
+
+            block_proj.Q_q.weights.set(block.attention.W_q.weights.get())
+            block_proj.Q_q.biases.set(block.attention.W_q.biases.get())
+            block_proj.Q_k.weights.set(block.attention.W_k.weights.get())
+            block_proj.Q_k.biases.set(block.attention.W_k.biases.get())
+            block_proj.Q_v.weights.set(block.attention.W_v.weights.get())
+            block_proj.Q_v.biases.set(block.attention.W_v.biases.get())
+
+            block_proj.Q_attn_out.weights.set(block.attention.W_attn_out.weights.get())
+            block_proj.Q_attn_out.biases.set(block.attention.W_attn_out.biases.get())
+
+            block_proj.Q_mlp1.weights.set(block.mlp.W_mlp1.weights.get())
+            block_proj.Q_mlp1.biases.set(block.mlp.W_mlp1.biases.get())
+            block_proj.Q_mlp2.weights.set(block.mlp.W_mlp2.weights.get())
+            block_proj.Q_mlp2.biases.set(block.mlp.W_mlp2.biases.get())
+
+        self.projection.Q_out.weights.set(self.output.W_out.weights.get())
+        self.projection.Q_out.biases.set(self.output.W_out.biases.get())
+        # self.projection.q_target_Ratecell.j_td.set(jnp.zeros((self.batch_size * self.seq_len, self.vocab_size)))
+
+        ## ════════════════════════════════════════════════════════════════════════════════
+        self.clamp_input(obs)
+        self.clamp_infer_target(lab)
+        self.project.run(t=0., dt=1.)
+
         ## get projected prediction (from the P-step)
         y_mu_inf = self.projection.q_target_Ratecell.zF.get()
-    
-        EFE = 0. 
-        y_mu = 0.
-        #if adapt_synapses:
-        for ts in range(0, self.T):
-        
-            self.clamp_input(obs)
-            self.clamp_target(lab)
-             
-            self.advance.run(t=ts,dt=1.)
-           
-        y_mu = self.z_actfx.zF.get() 
+
+        ## ════════════════════════════════════════════════════════════════════════════════
+        ## initialize dynamics of generative model latents to projected states
+        self.output.z_out.z.set(self.projection.q_out_Ratecell.z.get())
+        ## ----------------------------------------
+        for i in range(self.n_layers):
+            proj_block = self.projection.blocks[i]
+            block = self.blocks[i]
+            ## ------------------------------------
+            block.attention.z_qkv.z.set(proj_block.q_qkv_Ratecell.z.get())
+            block.attention.z_attn.z.set(proj_block.q_attn_Ratecell.z.get())
+            block.mlp.z_mlp.z.set(proj_block.q_mlp_Ratecell.z.get())
+            block.mlp.z_mlp2.z.set(proj_block.q_mlp2_Ratecell.z.get())
+            ## ------------------------------------
+            # block.attention.attn_block.inputs_q.set(proj_block.q_attn_block.inputs_q.get())
+            # block.attention.attn_block.inputs_k.set(proj_block.q_attn_block.inputs_k.get())
+            # block.attention.attn_block.inputs_v.set(proj_block.q_attn_block.inputs_v.get())
+        ## --------------------------------------------------------------------------------
+        self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
+        self.output.e_out.dtarget.set(self.projection.eq_target.dtarget.get())
+
+        # ══════  Learning  ═════════════════════════════════════════
+        EFE = 0.            ## expected free energy
+        y_mu = 0.           ## initial prediction
+        if adapt_synapses:
+            ## ════════════════════════════════
+            ## Perform several E-steps
+            for ts in range(0, self.T):
+                self.clamp_input(obs)
+                self.clamp_target(lab)
+                self.advance.run(t=ts, dt=1.)
+
+            ## ════════════════════════════════
+            ## get settled prediction
+            y_mu = self.z_actfx.zF.get()
 
         L1 = self.embedding.e_embed.L.get()
         
@@ -613,8 +620,9 @@ class NGCTransformer:
 
         if adapt_synapses == True:
                 self.embedding_evolve.run()
-                self.evolve.run(t=self.T,dt=1.)
-                
+                self.evolve.run(t=self.T, dt=1.)
+
+        ##################################################
         ## skip E/M steps if just doing test-time inference
         return y_mu_inf, y_mu, EFE, L1, L2, L3, L4, L5 
 
