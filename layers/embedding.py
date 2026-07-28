@@ -1,4 +1,3 @@
-
 from utils.errorcell import GaussianErrorCell as ErrorCell
 from utils.ratecell import RateCell
 from ngclearn.utils.distribution_generator import DistributionGenerator as dist
@@ -27,10 +26,11 @@ class EMBEDDING:
                 pos_learnable=pos_learnable,
                 eta=eta,
                 optim_type=optim_type,
+                w_bound=1.,
+                is_nonnegative=False,
+                prior=("constant", 0.),
+                weight_init= dist.gaussian(mean=0.0, std=0.07),
                 key=subkeys[0])
             
         self.e_embed = ErrorCell("e_embed", n_units=embed_dim, 
                                   batch_size=batch_size * seq_len) # shape=(seq_len, embed_dim, 1),
-    
-            
-

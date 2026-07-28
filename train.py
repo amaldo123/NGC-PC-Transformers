@@ -6,7 +6,8 @@ from data_preprocess.data_loader import DataLoader
 from config import Config as config
 from eval import eval_model
 import time
-
+import os
+from datetime import datetime
 
 jax.config.update("jax_default_matmul_precision", "high")
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -14,23 +15,23 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", 0)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 def main():
     seq_len, batch_size, n_embed, vocab_size, n_layers, n_heads, n_iter, optim_type = config.seq_len, config.batch_size, config.n_embed, config.vocab_size, config.n_layers, config.n_heads, config.n_iter, config.optim_type
-    pos_learnable= config.pos_learnable
-    epoch= config.epoch
-    wub= config.wub 
-    wlb= config.wlb
+    pos_learnable = config.pos_learnable
+    epoch = config.epoch
+    wub = config.wub 
+    wlb = config.wlb
     eta = config.eta
     T = n_iter
-    tau_m= config.tau_m
-    act_fx= config.act_fx
-    dropout_rate= config.dropout_rate
+    tau_m = config.tau_m
+    act_fx = config.act_fx
+    dropout_rate = config.dropout_rate
     dkey = random.PRNGKey(1234)
     
     data_loader = DataLoader(seq_len=seq_len, batch_size=batch_size)
     train_loader, valid_loader, _ = data_loader.load_and_prepare_data()
     
     model = NGCTransformer(dkey, batch_size=batch_size, seq_len=seq_len, n_embed=n_embed, vocab_size=vocab_size, n_layers=n_layers, n_heads=n_heads,
-                          T=T, dt=1., tau_m=tau_m , act_fx=act_fx, eta=eta, dropout_rate= dropout_rate, exp_dir="exp",
-                  loadDir= None, pos_learnable= pos_learnable, optim_type=optim_type, wub = wub, wlb= wlb, model_name="ngc_transformer", generate =False )
+                          T=T, dt=1., tau_m=tau_m , act_fx=act_fx, eta=eta, dropout_rate=dropout_rate, exp_dir="exp",
+                  loadDir=None, pos_learnable=pos_learnable, optim_type=optim_type, wub=wub, wlb=wlb, model_name="ngc_transformer", generate=False)
 
     print(f" {model.count_parameters()/1e6:.2f} M parameters")
 
@@ -44,7 +45,7 @@ def main():
 
             targets_flat = jax.nn.one_hot(targets, vocab_size).reshape(-1, vocab_size)
 
-            _, y_mu, _EFE = model.process(obs=inputs, lab=targets_flat, adapt_synapses=True)
+            _, y_mu, _EFE, L1, L2, L3, L4, L5, L6 = model.process(obs=inputs, lab=targets_flat, adapt_synapses=True)
             train_EFE += _EFE
 
             y_pred = y_mu.reshape(-1, vocab_size)
@@ -54,7 +55,7 @@ def main():
 
             if batch_idx % 10 == 0:
                 batch_ppl = jnp.exp(batch_ce_loss)
-                print(f"  Batch {batch_idx}: EFE = {_EFE:.4f}, CE = {batch_ce_loss:.4f}, PPL = {batch_ppl:.4f}")
+                print(f"  Batch {batch_idx}: EFE = {_EFE:.4f}, CE = {batch_ce_loss:.4f}, PPL = {batch_ppl:.4f}, L1 = {L1:.4f}, L2 = {L2:.4f}, L3 = {L3:.4f} , L4 = {L4:.4f}, L5 = {L5:.4f} | L6 = {L6:.4f}")
 
         num_batches = batch_idx + 1
         avg_train_EFE = train_EFE / num_batches

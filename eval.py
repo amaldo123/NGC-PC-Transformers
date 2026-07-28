@@ -25,11 +25,11 @@ def eval_model(model: NGCTransformer, data_loader, vocab_size: int):
         targets = batch[1][1]
 
         targets_flat = jax.nn.one_hot(targets.flatten(), vocab_size)
-        _, y_mu, EFE = model.process(obs=inputs,
+        ymu_inf, y_mu, EFE, _, _, _, _, _,_ = model.process(obs=inputs,
                                    lab=targets_flat,
                                    adapt_synapses=False)
 
-        y_pred = y_mu.reshape(-1, vocab_size)
+        y_pred = ymu_inf.reshape(-1, vocab_size)
         batch_ce_loss = measure_CatNLL(y_pred, targets_flat).mean()
         total_nll += batch_ce_loss * targets_flat.shape[0]
         total_tokens += targets_flat.shape[0]

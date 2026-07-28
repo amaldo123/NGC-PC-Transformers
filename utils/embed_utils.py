@@ -6,6 +6,7 @@ from ngclearn.components.jaxComponent import JaxComponent
 from ngclearn import Compartment
 from ngclearn import compilable
 from ngclearn.utils import tensorstats
+from ngclearn.utils.distribution_generator import DistributionGenerator as dist
 import os
 from pathlib import Path
 
@@ -21,9 +22,29 @@ def _create_sinusoidal_embeddings(seq_len, embed_dim):
     embeddings = embeddings.at[:, 1::2].set(jnp.cos(position * div_term))
     return embeddings
 
-@partial(jit, static_argnums=[4, 5, 6, 7])
+@partial(jit, static_argnums=[1])
+def _calc_prior_term(weights, prior_type, prior_lmbda):
+    """
+    Computes an L1/L2/Elastic-Net regularization term to be added to an
+    embedding update before the optimizer step. Returns zeros if disabled.
+    """
+    dW_reg = jnp.zeros_like(weights)
+
+    if prior_type == "l2" or prior_type == "ridge":
+        dW_reg = -weights * prior_lmbda
+    elif prior_type == "l1" or prior_type == "lasso":
+        dW_reg = -jnp.sign(weights) * prior_lmbda
+    elif prior_type == "l1l2" or prior_type == "elastic_net":
+        prior_scale, l1_ratio = prior_lmbda
+        dW_reg = -jnp.sign(weights) * l1_ratio - weights * (1 - l1_ratio) / 2
+        dW_reg = dW_reg * prior_scale
+
+    return dW_reg
+
+@partial(jit, static_argnums=[4, 5, 6, 7, 9])
 def _compute_embedding_updates(inputs, post, word_weights, pos_weights, 
-                              vocab_size, seq_len, embed_dim, batch_size, pos_learnable):
+                              vocab_size, seq_len, embed_dim, batch_size, pos_learnable,
+                              prior_type, prior_lmbda):
     """
     Compute updates for word and position embeddings
     """
@@ -43,8 +64,26 @@ def _compute_embedding_updates(inputs, post, word_weights, pos_weights,
     d_pos_weights = jax.lax.cond(
     pos_learnable, lambda: d_pos_weights.at[batch_positions].add(flat_errors), lambda: d_pos_weights
     )
+
+    # Add regularization/prior term
+    d_word_weights = d_word_weights + _calc_prior_term(word_weights, prior_type, prior_lmbda)
+    d_pos_weights = d_pos_weights + _calc_prior_term(pos_weights, prior_type, prior_lmbda)
             
     return d_word_weights, d_pos_weights
+
+@partial(jit, static_argnums=[1, 2])
+def _enforce_constraints(weights, w_bound, is_nonnegative=False):
+    """
+    Applies a hard clip to weights after the optimizer step.
+    w_bound <= 0 disables clipping.
+    """
+    _W = weights
+    if w_bound > 0.:
+        if is_nonnegative:
+            _W = jnp.clip(_W, 0., w_bound)
+        else:
+            _W = jnp.clip(_W, -w_bound, w_bound)
+    return _W
 
 class EmbeddingSynapse(JaxComponent):
     """
@@ -82,11 +121,28 @@ class EmbeddingSynapse(JaxComponent):
         optim_type: optimization scheme (Default: "sgd")
 
         weight_scale: scaling factor for weight initialization (Default: 0.02)
+
+        w_bound: maximum absolute value to hard-clip word_weights/pos_weights
+            to after each evolve() step; <= 0 disables clipping (Default: 0.)
+
+        is_nonnegative: if True and w_bound > 0, clip to [0, w_bound] instead
+            of [-w_bound, w_bound] (Default: False)
+
+        prior: regularization prior applied to both word_weights and
+            pos_weights; tuple of (name, lambda): ("constant", 0.) [off,
+            default], ("l2"/"ridge", lmbda), ("l1"/"lasso", lmbda),
+            ("l1l2"/"elastic_net", (scale, l1_ratio))
+
+       weight_init: initialization kernel (shape, key) -> array used to
+                    initialize word_weights and learnable pos_weights.
+                    If None, embeddings are initialized to zeros.
     """
 
     def __init__(
             self, name, vocab_size, seq_len, embed_dim, batch_size,
             pos_learnable, eta, optim_type, weight_scale=0.02, sign_value=-1.,
+            w_bound=1., is_nonnegative=False, prior=("constant", 0.),
+            weight_init=None,
             **kwargs
     ):
         super().__init__(name, **kwargs)
@@ -101,13 +157,34 @@ class EmbeddingSynapse(JaxComponent):
         self.optim_type = optim_type
         self.sign_value = sign_value
 
+        # Regularization/bounding configuration
+        self.w_bound = w_bound
+        self.is_nonnegative = is_nonnegative
+        prior_type, prior_lmbda = prior
+        if prior_type is None:
+            prior_type = "constant"
+        if prior_type.lower() == "gaussian":
+            prior_type = "ridge"
+        elif prior_type.lower() == "laplacian":
+            prior_type = "lasso"
+        self.prior_type = prior_type
+        self.prior_lmbda = prior_lmbda
+
         key =random.PRNGKey(1234)
         word_key, pos_key = random.split(key, 2)
         
-        word_weights = random.normal(word_key, (self.vocab_size, self.embed_dim)) * weight_scale
+        # Fallback initialization: zeros, since scatter-add updates break
+        # symmetry per-token/position without needing random initialization
+        if weight_init is not None:
+            word_weights = weight_init((self.vocab_size, self.embed_dim), word_key)
+        else:
+            word_weights = jnp.zeros((self.vocab_size, self.embed_dim))
         
         if pos_learnable:
-            pos_weights = random.normal(pos_key, (self.seq_len, self.embed_dim)) * weight_scale
+            if weight_init is not None:
+                pos_weights = weight_init((self.seq_len, self.embed_dim), pos_key)
+            else:
+                pos_weights = jnp.zeros((self.seq_len, self.embed_dim))
         else:
             pos_weights = _create_sinusoidal_embeddings(self.seq_len, self.embed_dim)
 
@@ -173,8 +250,13 @@ class EmbeddingSynapse(JaxComponent):
         inputs= inputs.astype(jnp.int32)
         d_word_weights, d_pos_weights = _compute_embedding_updates(
             inputs, post, word_weights, pos_weights, self.vocab_size, self.seq_len,
-            self.embed_dim, batch_size, self.pos_learnable
+            self.embed_dim, batch_size, self.pos_learnable, self.prior_type, self.prior_lmbda
         )
+
+        # Optional soft weight-bound scaling of the update
+        if self.w_bound > 0.:
+            d_word_weights = d_word_weights * (self.w_bound - jnp.abs(word_weights))
+            d_pos_weights = d_pos_weights * (self.w_bound - jnp.abs(pos_weights))
 
         d_word_weights = d_word_weights * self.sign_value
         d_pos_weights = d_pos_weights * self.sign_value
@@ -192,6 +274,11 @@ class EmbeddingSynapse(JaxComponent):
             )
             new_pos_opt_params = pos_opt_params
         
+        # Optional hard clip of weights post-update
+        new_word_weights = _enforce_constraints(new_word_weights, self.w_bound, is_nonnegative=self.is_nonnegative)
+        if self.pos_learnable:
+            new_pos_weights = _enforce_constraints(new_pos_weights, self.w_bound, is_nonnegative=self.is_nonnegative)
+
         # return new_word_weights, new_pos_weights, d_word_weights, d_pos_weights, word_opt_params, new_pos_opt_params
         self.word_weights.set(new_word_weights)
         self.pos_weights.set(new_pos_weights)
