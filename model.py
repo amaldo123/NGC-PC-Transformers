@@ -93,7 +93,7 @@ class NGCTransformer:
             self.reshape_2d_to_3d_embed= ReshapeComponent("reshape_2d_to_3d_embed",
                                             input_shape=(self.batch_size * self.seq_len, self.n_embed),
                                             output_shape=(self.batch_size, self.seq_len, self.n_embed))
-            self.Outgrad = Outgrad("Outgrad", batch_size=self.batch_size, seq_len=self.seq_len, vocab_size=self.vocab_size)    
+            self.Outgrad = Outgrad("Outgrad", batch_size=self.batch_size, seq_len=self.seq_len, vocab_size=self.vocab_size, generate = self.generate)    
                 
         if loadDir is not None:
    
@@ -209,12 +209,11 @@ class NGCTransformer:
                         
                 self.output.z_out.zF >> self.output.W_out.inputs
                 self.output.W_out.outputs >> self.z_actfx.j
-                self.output.W_out.outputs >> self.Outgrad.mu
                 self.z_actfx.zF >> self.output.e_out.mu
                 self.z_target.z >> self.output.e_out.target
-                if generate ==True:
-                    self.Outgrad.final >> self.z_target.j
+                self.output.W_out.outputs >> self.Outgrad.mu
 
+                self.Outgrad.final >> self.z_target.j_td
                 self.output.e_out.dmu >> self.output.E_out.inputs
                 self.output.e_out.dmu >> self.output.W_out.post
 
@@ -267,7 +266,7 @@ class NGCTransformer:
                 self.projection.q_out_Ratecell.zF >> self.projection.Q_out.inputs
                 self.projection.Q_out.outputs >> self.projection.q_target_Ratecell.j
 
-                self.projection.q_target_Ratecell.z >> self.projection.eq_target.mu
+                self.projection.q_target_Ratecell.zF >> self.projection.eq_target.mu
 
                 
                 # Create the processes by iterating through all blocks
@@ -578,6 +577,9 @@ class NGCTransformer:
         ## ════════════════════════════════════════════════════════════════════════════════
         ## initialize dynamics of generative model latents to projected states
         self.output.z_out.z.set(self.projection.q_out_Ratecell.z.get())
+        if self.generate ==True:
+                self.z_target.z.set(self.projection.q_target_Ratecell.z.get())
+                
         ## ----------------------------------------
         for i in range(self.n_layers):
             proj_block = self.projection.blocks[i]
@@ -594,18 +596,12 @@ class NGCTransformer:
         ## --------------------------------------------------------------------------------
         # self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
         # self.output.e_out.dtarget.set(self.projection.eq_target.dtarget.get())
-        for i in range(self.n_layers):
-        #     block_proj= self.projection.blocks[i]   
-            b= self.blocks[i]
-        #     b.attention.z_qkv.z.set(block_proj.q_qkv_Ratecell.z.get())
-        #     b.mlp.z_mlp.z.set(block_proj.q_mlp_Ratecell.z.get())
-        #     b.mlp.z_mlp2.z.set(block_proj.q_mlp2_Ratecell.z.get())
-            b.attention.E_q.weights.set(jnp.transpose(b.attention.W_q.weights.get()))
-            b.attention.E_k.weights.set(jnp.transpose(b.attention.W_k.weights.get()))
-            b.attention.E_v.weights.set(jnp.transpose(b.attention.W_v.weights.get()))
-            b.attention.E_attn.weights.set(jnp.transpose(b.attention.W_attn_out.weights.get()))
-            b.mlp.E_mlp.weights.set(jnp.transpose(b.mlp.W_mlp2.weights.get()))  
-            b.mlp.E_mlp1.weights.set(jnp.transpose(b.mlp.W_mlp1.weights.get()))
+            block.attention.E_q.weights.set(jnp.transpose(block.attention.W_q.weights.get()))
+            block.attention.E_k.weights.set(jnp.transpose(block.attention.W_k.weights.get()))
+            block.attention.E_v.weights.set(jnp.transpose(block.attention.W_v.weights.get()))
+            block.attention.E_attn.weights.set(jnp.transpose(block.attention.W_attn_out.weights.get()))
+            block.mlp.E_mlp.weights.set(jnp.transpose(block.mlp.W_mlp2.weights.get()))  
+            block.mlp.E_mlp1.weights.set(jnp.transpose(block.mlp.W_mlp1.weights.get()))
 
         self.output.E_out.weights.set(jnp.transpose(self.output.W_out.weights.get()))
         # 
@@ -618,9 +614,7 @@ class NGCTransformer:
             ## Perform several E-steps
         for ts in range(0, self.T):
             self.clamp_input(obs)
-            if self.generate ==True:
-                self.clamp_target(y_mu_inf)
-            else:
+            if self.generate ==False:
                 self.clamp_target(lab)
 
             self.advance.run(t=ts, dt=1.)
