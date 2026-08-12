@@ -3,24 +3,24 @@ class Config:
     seq_len =32
     n_embed = 128
     batch_size = 8
-    vocab_size = 11711# data vocab size + special tokens = 11706 + 4
+    vocab_size = 5000# data vocab size + special tokens = 11706 + 4
     n_heads = 8
     n_layers = 4
     dropout_rate = 0.1
-    eta = 4.919042890915579e-06
+    eta = 4.919042890915579e-04
     eta_o= 4.919042890915579e-03
     exp_dir = "exp" 
     pos_learnable = True
     optim_type = "sgd"
     epoch = 5
     n_iter= 26
-    tau_o = 5
+    tau_o = 500
     # Approximate Xavier scaling: 1 / sqrt(512) is about 0.04
     wub = 0.035284728580901155
     wlb =  -0.07318664527441558
     wu = 0.035284728580901155
     wl = -0.035284728580901155
-    tau_m = 5
+    tau_m = 500
     act_fx = "identity"
     act_fx_o = "identity"
     
