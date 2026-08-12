@@ -19,8 +19,8 @@ class MLP:
         dkey, *subkeys = random.split(dkey, 10)
        
 
-        self.z_mlp = RateCell(f"{prefix}z_mlp", n_units=n_embed, tau_m=tau_m, act_fx=config.act_fx, batch_size=batch_size * seq_len)
-        self.z_mlp2 = RateCell(f"{prefix}z_mlp2", n_units= 4* n_embed, tau_m= tau_m, act_fx="gelu", batch_size=batch_size * seq_len)
+        self.z_mlp = RateCell(f"{prefix}z_mlp", n_units=n_embed, tau_m=tau_m, act_fx=config.act_fx, threshold=(config.threshold_type, config.threshold_lambda), batch_size=batch_size * seq_len)
+        self.z_mlp2 = RateCell(f"{prefix}z_mlp2", n_units= 4* n_embed, tau_m= tau_m, act_fx="gelu", threshold=(config.threshold_type, config.threshold_lambda), batch_size=batch_size * seq_len)
         
         self.W_mlp1 = HebbianSynapse(f"{prefix}W_mlp1", shape=(n_embed, 4*n_embed), batch_size = batch_size * seq_len, eta=eta, weight_init=dist.fan_in_gaussian(),
                     bias_init=dist.constant(value=0.), w_bound=1., optim_type=optim_type, sign_value=-1.0, key=subkeys[4],prior=("constant", 0.))

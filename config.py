@@ -23,6 +23,11 @@ class Config:
     tau_m = 5
     act_fx = "identity"
     act_fx_o = "identity"
+    
+    # RateCell soft-thresholding regularization:
+    # shrinks small state activations toward zero to test stability effects
+    threshold_type = "soft_threshold"    
+    threshold_lambda = 0.0125
 
     # Tokenizer selection: "BPE" (custom/BPE loader) or "tiktoken"
     tokenizer = "BPE"

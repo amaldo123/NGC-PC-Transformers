@@ -35,8 +35,10 @@ class Attention:
         dkey, *subkeys = random.split(dkey, 10)
 
         self.z_qkv = AttnRateCell(f"{prefix}z_qkv", n_units=n_embed, tau_m=tau_m, 
+                            threshold=(config.threshold_type, config.threshold_lambda),
                             act_fx=config.act_fx, batch_size=batch_size * seq_len )
         self.z_attn = RateCell(f"{prefix}z_attn", n_units=n_embed, tau_m=tau_m,
+                            threshold=(config.threshold_type, config.threshold_lambda),
                             act_fx=config.act_fx, batch_size=batch_size * seq_len )
         
         self.W_q = HebbianSynapse(f"{prefix}W_q", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
