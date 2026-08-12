@@ -5,6 +5,7 @@ from ngclearn import compilable
 from jax import numpy as jnp, random, jit
 from functools import partial
 from jax import vmap
+from jax import lax
 
 
 def d_softmax_vjp(x, tau=0.0):
@@ -77,12 +78,13 @@ class Outgrad(JaxComponent):
     where mu are the logits (pre-softmax)
     """
     
-    def __init__(self, name, batch_size, seq_len, vocab_size, **kwargs):
+    def __init__(self, name, batch_size, seq_len, vocab_size, generate, **kwargs):
         super().__init__(name, **kwargs)
 
         self.vocab_size = vocab_size
         self.batch_size = batch_size
         self.seq_len = seq_len
+        self.generate = generate
         self.final = Compartment(jnp.zeros((batch_size * seq_len, vocab_size)))
 
         self.mu = Compartment(jnp.zeros((batch_size * seq_len, vocab_size)))
@@ -100,8 +102,22 @@ class Outgrad(JaxComponent):
         
         dmu_out = jvp_fn(dmu)
         
-        self.dmu_.set(dmu_out)
-        self.final.set(final)
+        # Use lax.cond to conditionally set outputs based on generate flag
+        # If generate == True: store computed values
+        # If generate == False: store zeros
+        zeros = jnp.zeros_like(dmu_out)
+        
+        self.dmu_.set(lax.cond(
+            self.generate,
+            lambda: dmu_out,
+            lambda: zeros
+        ))
+        
+        self.final.set(lax.cond(
+            self.generate,
+            lambda: final,
+            lambda: zeros
+        ))
         
     @compilable
     def reset(self):
