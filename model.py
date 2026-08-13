@@ -214,7 +214,7 @@ class NGCTransformer:
                 self.Outgrad.final >> self.z_target.j_td
                 self.output.e_out.dmu >> self.output.W_out.post_in
 
-                    self.output.W_out.pre_out >> self.output.z_out.j
+                self.output.W_out.pre_out >> self.output.z_out.j
                 self.blocks[self.n_layers - 1].mlp.e_mlp.dtarget >> self.output.z_out.j_td
 
 
