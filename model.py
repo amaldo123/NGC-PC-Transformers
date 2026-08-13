@@ -155,23 +155,21 @@ class NGCTransformer:
                     else:
                         self.blocks[blocks + 1].attention.z_qkv.z >> block.mlp.e_mlp.target
 
+                    block.mlp.e_mlp1.dmu >> block.mlp.W_mlp1.post_in
+                    block.mlp.e_mlp.dmu  >> block.mlp.W_mlp2.post_in
 
-
-                    block.mlp.e_mlp1.dmu >> block.mlp.E_mlp1.inputs
-                    block.mlp.e_mlp.dmu  >> block.mlp.E_mlp.inputs
-
-                    # block.attention.e_qkv.dmu >> block.attention.attn_block.dmu
-                    block.attention.e_attn.dmu >> block.attention.E_attn.inputs
-                    block.attention.E_attn.outputs >> block.attention.attn_block.dmu
-                    block.attention.attn_block.dq >> block.attention.E_q.inputs
-                    block.attention.attn_block.dk >> block.attention.E_k.inputs
-                    block.attention.attn_block.dv >> block.attention.E_v.inputs
+                    block.attention.e_qkv.dmu >> block.attention.attn_block.dmu
+                    
+                    block.attention.attn_block.dq >> block.attention.W_q.post_in
+                    block.attention.attn_block.dk >> block.attention.W_k.post_in
+                    block.attention.attn_block.dv >> block.attention.W_v.post_in
+                    block.attention.e_attn.dmu >> block.attention.W_attn_out.post_in
                     
                     
-                    block.attention.E_q.outputs >>block.attention.z_qkv.jq
-                    block.attention.E_k.outputs >>block.attention.z_qkv.jk
-                    block.attention.E_v.outputs >> block.attention.z_qkv.jv
-                    # block.attention.E_attn.outputs >> block.attention.z_attn.j
+                    block.attention.W_q.pre_out >>block.attention.z_qkv.jq
+                    block.attention.W_k.pre_out >>block.attention.z_qkv.jk
+                    block.attention.W_v.pre_out >> block.attention.z_qkv.jv
+                    block.attention.W_attn_out.pre_out >> block.attention.z_attn.j
 
 
                     if blocks == 0:
@@ -180,8 +178,8 @@ class NGCTransformer:
                         self.blocks[blocks - 1].mlp.e_mlp.dtarget >> block.attention.z_qkv.j_td
                     # block.attention.e_qkv.dtarget >> block.attention.z_attn.j_td
 
-                    block.mlp.E_mlp.outputs  >> block.mlp.z_mlp2.j
-                    block.mlp.E_mlp1.outputs >> block.mlp.z_mlp.j
+                    block.mlp.W_mlp2.pre_out  >> block.mlp.z_mlp2.j
+                    block.mlp.W_mlp1.pre_out >> block.mlp.z_mlp.j
 
                     block.attention.e_attn.dtarget >> block.mlp.z_mlp.j_td
                     block.mlp.e_mlp1.dtarget >> block.mlp.z_mlp2.j_td
@@ -214,10 +212,9 @@ class NGCTransformer:
                 self.output.W_out.outputs >> self.Outgrad.mu
 
                 self.Outgrad.final >> self.z_target.j_td
-                self.output.e_out.dmu >> self.output.E_out.inputs
-                self.output.e_out.dmu >> self.output.W_out.post
+                self.output.e_out.dmu >> self.output.W_out.post_in
 
-                self.output.E_out.outputs >> self.output.z_out.j
+                    self.output.W_out.pre_out >> self.output.z_out.j
                 self.blocks[self.n_layers - 1].mlp.e_mlp.dtarget >> self.output.z_out.j_td
 
 
@@ -302,25 +299,18 @@ class NGCTransformer:
                     advance_process >> block.reshape_3d_to_2d.advance_state
                     # advance_process >> block.attention.e_qkv.advance_state
                     advance_process >> block.attention.e_attn.advance_state
-                    advance_process >> block.attention.E_q.advance_state
-                    advance_process >> block.attention.E_k.advance_state
-                    advance_process >> block.attention.E_v.advance_state
-
 
                     # advance_process >> block.attention.z_attn.advance_state
                     advance_process >> block.attention.W_attn_out.advance_state
-                    advance_process >> block.attention.E_attn.advance_state
                     
                     
                     advance_process >> block.mlp.z_mlp.advance_state
                     advance_process >> block.mlp.W_mlp1.advance_state
                     advance_process >> block.mlp.e_mlp1.advance_state
-                    advance_process >> block.mlp.E_mlp1.advance_state
 
                     advance_process >> block.mlp.z_mlp2.advance_state
                     advance_process >> block.mlp.W_mlp2.advance_state
                     advance_process >> block.mlp.e_mlp.advance_state
-                    advance_process >> block.mlp.E_mlp.advance_state
                    
                    
                     reset_process >> block.attention.attn_block.reset
@@ -352,7 +342,6 @@ class NGCTransformer:
                     evolve_process >> block.mlp.W_mlp2.evolve
 
                 # Add non-block components to advance_process, reset_process, evolve_process
-                advance_process >> self.output.E_out.advance_state
                 advance_process >> self.output.z_out.advance_state
                 advance_process >> self.output.W_out.advance_state
                 advance_process >> self.z_actfx.advance_state
@@ -645,6 +634,8 @@ class NGCTransformer:
         ##################################################
         ## skip E/M steps if just doing test-time inference
         return y_mu_inf, y_mu, EFE
+
+    
 
     def count_parameters(self):
         """Count total number of learnable parameters in the model."""

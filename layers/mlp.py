@@ -1,6 +1,6 @@
 import jax
 from jax import numpy as jnp, random, jit
-from ngclearn.components import HebbianSynapse, StaticSynapse
+from ngclearn.components import HebbianPatchedSynapse as HebbianSynapse
 from ngclearn.utils.distribution_generator import DistributionGenerator as dist
 from config import Config as config
 from utils.errorcell import GaussianErrorCell as ErrorCell
@@ -23,18 +23,15 @@ class MLP:
         self.z_mlp2 = RateCell(f"{prefix}z_mlp2", n_units= 4* n_embed, tau_m= tau_m, act_fx="gelu", threshold=(config.threshold_type, config.threshold_lambda), batch_size=batch_size * seq_len)
         
         self.W_mlp1 = HebbianSynapse(f"{prefix}W_mlp1", shape=(n_embed, 4*n_embed), batch_size = batch_size * seq_len, eta=eta, weight_init=dist.fan_in_gaussian(),
-                    bias_init=dist.constant(value=0.), w_bound=1., optim_type=optim_type, sign_value=-1.0, key=subkeys[4],prior=("constant", 0.))
-        self.W_mlp2 = HebbianSynapse(
-                    f"{prefix}W_mlp2", shape=(4*n_embed, n_embed), batch_size= batch_size * seq_len, eta=eta, weight_init=dist.fan_in_gaussian(),
-                    bias_init=dist.constant(value=0.), w_bound=1., optim_type=optim_type, sign_value=-1.0, key=subkeys[5],prior=("constant", 0.))
-        self.e_mlp = ErrorCell(f"{prefix}e_mlp", n_units=n_embed, 
-                                  batch_size=batch_size * seq_len) # shape=(seq_len, n_embed, 1),   
-        self.e_mlp1 = ErrorCell(f"{prefix}e_mlp1", n_units= 4* n_embed, 
-                                  batch_size=batch_size * seq_len)
+                                     bias_init=dist.constant(value=0.), w_bound=1., optim_type=optim_type, sign_value=-1., prior=("constant", 0.), key=subkeys[4]
+                                    )
+        self.W_mlp2 = HebbianSynapse(f"{prefix}W_mlp2", shape=(4*n_embed, n_embed), batch_size= batch_size * seq_len, eta=eta, weight_init=dist.fan_in_gaussian(),
+                                     bias_init=dist.constant(value=0.), w_bound=1., optim_type=optim_type, sign_value=-1., prior=("constant", 0.), key=subkeys[5]
+                                    )
         
+        self.e_mlp = ErrorCell(f"{prefix}e_mlp", n_units=n_embed, batch_size=batch_size * seq_len)   
+        self.e_mlp1 = ErrorCell(f"{prefix}e_mlp1", n_units= 4* n_embed, batch_size=batch_size * seq_len)
         
-        self.E_mlp1 = StaticSynapse(f"{prefix}E_mlp1", shape=(4 * n_embed,n_embed), weight_init=dist.constant(value=0.0), bias_init=None, key=subkeys[4])
-        self.E_mlp = StaticSynapse(f"{prefix}E_mlp", shape=(n_embed, 4 * n_embed), weight_init=dist.constant(value=0.0), bias_init=None, key=subkeys[4])
     def get_components(self):
         """Return all components for easy access"""
         return {
@@ -42,8 +39,6 @@ class MLP:
             'W_mlp1': self.W_mlp1,
             'W_mlp2': self.W_mlp2,
             'e_mlp': self.e_mlp,
-            'E_mlp': self.E_mlp,
-            'E_mlp1': self.E_mlp1,
             'e_mlp1': self.e_mlp1,
             'z_mlp2': self.z_mlp2
         }
