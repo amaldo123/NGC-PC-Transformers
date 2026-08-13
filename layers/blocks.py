@@ -6,12 +6,18 @@ import jax.numpy as jnp
 from utils.model_util import ReshapeComponent
 from utils.rms_norm_util import RMSNorm
 
+from utils.residual_util import ResidualComponent
+
 class Block:
     def __init__(self, dkey, block_id, n_embed, seq_len, vocab_size,
                  batch_size, n_heads, dropout_rate, eta, optim_type, wub, wlb, tau_m,position_encoding, rope_theta, **kwargs):
         
         dkey, attn_key, mlp_key = random.split(dkey, 3)
         prefix = f"block{block_id}_"
+
+        # Instantiate residual components for Attention and MLP
+        self.res1 = ResidualComponent(f"{prefix}res1", shape=(batch_size * seq_len, n_embed))
+        self.res2 = ResidualComponent(f"{prefix}res2", shape=(batch_size * seq_len, n_embed))
 
         # self.ln1 = RMSNorm(f"{prefix}ln1", n_embed=n_embed, batch_size= batch_size * seq_len)
 

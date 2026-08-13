@@ -45,3 +45,7 @@ class Config:
 
     # set True to Use jax.lax.scan fused advance loop (faster, minor floating-point differences from the normal python loop)
     fused_advance = True
+
+    # Toggle residual connections (True/False)
+    use_residual = True
+

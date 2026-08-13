@@ -81,7 +81,7 @@ class NGCTransformer:
             self.output = Output(dkey=subkeys[3], n_embed=self.n_embed, seq_len=self.seq_len, batch_size=self.batch_size, vocab_size=self.vocab_size, eta=eta, optim_type=optim_type, wlb=wlb, wub=wub, tau_m=tau_m)
                 
             self.z_target=RateCell("z_target", n_units= self.vocab_size, tau_m=0., act_fx="identity", batch_size=self.batch_size * self.seq_len) 
-            self.z_actfx= RateCell("z_actfx", n_units= self.vocab_size, tau_m=tau_m, act_fx="softmax", batch_size=self.batch_size * self.seq_len)
+            self.z_actfx= RateCell("z_actfx", n_units= self.vocab_size, tau_m=tau_m, act_fx=config.act_fx_o, batch_size=self.batch_size * self.seq_len)
             self.projection = Projection(dkey=subkeys[29], n_embed=self.n_embed, seq_len=self.seq_len, batch_size=self.batch_size,
                                              vocab_size=self.vocab_size, eta=eta, optim_type=optim_type, wub=wub, wlb=wlb, n_blocks=n_layers, n_heads=n_heads, dropout_rate=dropout_rate , position_encoding=self.position_encoding, pos_learnable=self.pos_learnable, rope_theta=self.rope_theta,)
             self.reshape_4d_to_2d = ReshapeComponent("reshape_4d_to_2d",
@@ -130,7 +130,12 @@ class NGCTransformer:
                     block.attention.z_attn.z >> block.attention.e_qkv.target
                     
                     block.attention.z_attn.zF >>block.attention.W_attn_out.inputs 
-                    block.attention.W_attn_out.outputs >> block.attention.e_attn.mu
+                    if getattr(config, "use_residual", True):
+                        block.attention.z_qkv.zF >> block.res1.x1
+                        block.attention.W_attn_out.outputs >> block.res1.x2
+                        block.res1.outputs >> block.attention.e_attn.mu
+                    else:
+                        block.attention.W_attn_out.outputs >> block.attention.e_attn.mu
                     block.mlp.z_mlp.z >> block.attention.e_attn.target
 
                     
@@ -143,7 +148,12 @@ class NGCTransformer:
 
 
                     block.mlp.z_mlp2.zF >> block.mlp.W_mlp2.inputs
-                    block.mlp.W_mlp2.outputs >> block.mlp.e_mlp.mu
+                    if getattr(config, "use_residual", True):
+                        block.mlp.z_mlp.zF >> block.res2.x1
+                        block.mlp.W_mlp2.outputs >> block.res2.x2
+                        block.res2.outputs >> block.mlp.e_mlp.mu
+                    else:
+                        block.mlp.W_mlp2.outputs >> block.mlp.e_mlp.mu
 
      
                     
@@ -155,14 +165,24 @@ class NGCTransformer:
 
 
                     block.mlp.e_mlp1.dmu >> block.mlp.E_mlp1.inputs
-                    block.mlp.e_mlp.dmu  >> block.mlp.E_mlp.inputs
+                    if getattr(config, "use_residual", True):
+                        block.mlp.e_mlp.dmu >> block.res2.dmu
+                        block.res2.dx2 >> block.mlp.E_mlp.inputs
+                        block.res2.dx1 >> block.mlp.z_mlp.j
+                    else:
+                        block.mlp.e_mlp.dmu  >> block.mlp.E_mlp.inputs
 
                     block.attention.e_qkv.dmu >> block.attention.attn_block.dmu
                     
                     block.attention.attn_block.dq >> block.attention.E_q.inputs
                     block.attention.attn_block.dk >> block.attention.E_k.inputs
                     block.attention.attn_block.dv >> block.attention.E_v.inputs
-                    block.attention.e_attn.dmu >> block.attention.E_attn.inputs
+                    if getattr(config, "use_residual", True):
+                        block.attention.e_attn.dmu >> block.res1.dmu
+                        block.res1.dx2 >> block.attention.E_attn.inputs
+                        block.res1.dx1 >> block.attention.z_qkv.j
+                    else:
+                        block.attention.e_attn.dmu >> block.attention.E_attn.inputs
                     
                     
                     block.attention.E_q.outputs >>block.attention.z_qkv.jq
@@ -252,10 +272,17 @@ class NGCTransformer:
                     block_proj.reshape_3d_to_2d_proj1.outputs >> block_proj.q_attn_Ratecell.j
                     block_proj.q_attn_Ratecell.zF >> block_proj.Q_attn_out.inputs
                     block_proj.Q_attn_out.outputs >> block_proj.q_mlp_Ratecell.j
+                    if getattr(config, "use_residual", True):
+                        block_proj.q_qkv_Ratecell.zF >> block_proj.q_mlp_Ratecell.j
 
                     block_proj.q_mlp_Ratecell.zF >> block_proj.Q_mlp1.inputs
                     block_proj.Q_mlp1.outputs >> block_proj.q_mlp2_Ratecell.j
                     block_proj.q_mlp2_Ratecell.zF >> block_proj.Q_mlp2.inputs
+                    if getattr(config, "use_residual", True):
+                        if b == n_layers - 1:
+                            block_proj.q_mlp_Ratecell.zF >> self.projection.q_out_Ratecell.j
+                        else:
+                            block_proj.q_mlp_Ratecell.zF >> self.projection.blocks[b + 1].q_qkv_Ratecell.j
 
                 self.projection.blocks[n_layers - 1].Q_mlp2.outputs >> self.projection.q_out_Ratecell.j
                 self.projection.q_out_Ratecell.zF >> self.projection.Q_out.inputs
@@ -294,6 +321,8 @@ class NGCTransformer:
                     advance_process >> block.attention.attn_block.advance_state
                     advance_process >> block.reshape_3d_to_2d.advance_state
                     advance_process >> block.attention.e_qkv.advance_state
+                    if getattr(config, "use_residual", True):
+                        advance_process >> block.res1.advance_state
                     advance_process >> block.attention.e_attn.advance_state
                     advance_process >> block.attention.E_q.advance_state
                     advance_process >> block.attention.E_k.advance_state
@@ -312,6 +341,8 @@ class NGCTransformer:
 
                     advance_process >> block.mlp.z_mlp2.advance_state
                     advance_process >> block.mlp.W_mlp2.advance_state
+                    if getattr(config, "use_residual", True):
+                        advance_process >> block.res2.advance_state
                     advance_process >> block.mlp.e_mlp.advance_state
                     advance_process >> block.mlp.E_mlp.advance_state
                    
@@ -330,6 +361,9 @@ class NGCTransformer:
                     reset_process >> block.reshape_2d_to_3d_k.reset
                     reset_process >> block.reshape_2d_to_3d_v.reset
                     reset_process >> block.reshape_3d_to_2d_attnout.reset
+                    if getattr(config, "use_residual", True):
+                        reset_process >> block.res1.reset
+                        reset_process >> block.res2.reset
             
                     evolve_process >> block.attention.W_q.evolve
                     evolve_process >> block.attention.W_k.evolve
