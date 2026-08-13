@@ -578,22 +578,7 @@ class NGCTransformer:
             # block.attention.z_attn.z.set(proj_block.q_attn_Ratecell.z.get())
             block.mlp.z_mlp.z.set(proj_block.q_mlp_Ratecell.z.get())
             block.mlp.z_mlp2.z.set(proj_block.q_mlp2_Ratecell.z.get())
-            ## ------------------------------------
-            # block.attention.attn_block.inputs_q.set(proj_block.q_attn_block.inputs_q.get())
-            # block.attention.attn_block.inputs_k.set(proj_block.q_attn_block.inputs_k.get())
-            # block.attention.attn_block.inputs_v.set(proj_block.q_attn_block.inputs_v.get())
-        ## --------------------------------------------------------------------------------
-        # self.output.e_out.dmu.set(self.projection.eq_target.dmu.get())
-        # self.output.e_out.dtarget.set(self.projection.eq_target.dtarget.get())
-            block.attention.E_q.weights.set(jnp.transpose(block.attention.W_q.weights.get()))
-            block.attention.E_k.weights.set(jnp.transpose(block.attention.W_k.weights.get()))
-            block.attention.E_v.weights.set(jnp.transpose(block.attention.W_v.weights.get()))
-            block.attention.E_attn.weights.set(jnp.transpose(block.attention.W_attn_out.weights.get()))
-            block.mlp.E_mlp.weights.set(jnp.transpose(block.mlp.W_mlp2.weights.get()))  
-            block.mlp.E_mlp1.weights.set(jnp.transpose(block.mlp.W_mlp1.weights.get()))
-
-        self.output.E_out.weights.set(jnp.transpose(self.output.W_out.weights.get()))
-        # 
+                     
 
         # ══════  Learning  ═════════════════════════════════════════
         EFE = 0.            ## expected free energy
