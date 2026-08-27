@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
@@ -8,7 +15,7 @@ import numpy as np
 import sys
 import os
 import json 
-from datasets_registry import prepare_dataset
+from data_preprocess.datasets_registry import prepare_dataset
 """ to run: python -m data_preprocess.tokenizer """
 
 DIR = Path(__file__).parent

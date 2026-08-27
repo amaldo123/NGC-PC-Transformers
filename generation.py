@@ -24,6 +24,11 @@ jax.config.update('jax_log_compiles', False)
 # Restore stderr after JAX initialization
 sys.stderr = stderr
 
+from pathlib import Path
+_REPO_ROOT = str(Path(__file__).resolve().parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from model import NGCTransformer
 import jax.numpy as jnp
 import numpy as np

@@ -20,6 +20,57 @@ import numpy as np
 from utils.errorcell import GaussianErrorCell as ErrorCell
 from utils.ratecell import RateCell
 
+def _patch_jax_component_serialization():
+    
+    import ngclearn.components.jaxComponent as jaxComponent_module
+    JaxComponent = jaxComponent_module.JaxComponent
+
+    def _is_flat_safe(value):
+        try:
+            arr = np.asanyarray(value)
+            return arr.dtype != object
+        except Exception:
+            return False
+
+    def _flatten(value, prefix, data):
+        if isinstance(value, (list, tuple)) and not _is_flat_safe(value):
+            data[f"{prefix}__container"] = "tuple" if isinstance(value, tuple) else "list"
+            data[f"{prefix}__n"] = jnp.array(len(value))
+            for i, item in enumerate(value):
+                _flatten(item, f"{prefix}__{i}", data)
+        else:
+            data[prefix] = value
+
+    def _unflatten(prefix, data):
+        container_key = f"{prefix}__container"
+        if container_key in data.files:
+            kind = str(data[container_key])
+            n = int(data[f"{prefix}__n"])
+            items = [_unflatten(f"{prefix}__{i}", data) for i in range(n)]
+            return tuple(items) if kind == "tuple" else items
+        return data[prefix]
+
+    def _safe_save(self, directory):
+        file_name = directory + "/" + self.name + ".npz"
+        data = {}
+        for comp_name, comp in self.compartments:
+            if not comp.targeted and comp.auto_save:
+                _flatten(comp.get(), comp_name, data)
+        jnp.savez(file_name, **data)
+
+    def _safe_load(self, directory):
+        file_name = directory + "/" + self.name + ".npz"
+        data = jnp.load(file_name)
+        for comp_name, comp in self.compartments:
+            if f"{comp_name}__container" in data.files or comp_name in data.files:
+                comp.set(_unflatten(comp_name, data))
+
+    JaxComponent.save = _safe_save
+    JaxComponent.load = _safe_load
+
+
+
+_patch_jax_component_serialization()
 
 
 class NGCTransformer:
@@ -462,6 +513,9 @@ class NGCTransformer:
         self.embedding.W_embed.pos_weights.set(self.circuit.get_components("W_embed").pos_weights.get())
         self.output.W_out.weights.set(self.circuit.get_components("W_out").weights.get())
         self.output.W_out.biases.set(self.circuit.get_components("W_out").biases.get())
+        self.embedding.W_embed.word_opt_params.set(self.circuit.get_components("W_embed").word_opt_params.get())
+        self.embedding.W_embed.pos_opt_params.set(self.circuit.get_components("W_embed").pos_opt_params.get())
+        self.output.W_out.opt_params.set(self.circuit.get_components("W_out").opt_params.get())
       
         self.projection.q_out_Ratecell.z.set( self.circuit.get_components("q_out_Ratecell").z.get())
         self.projection.eq_target.dmu.set( self.circuit.get_components("eq_target").dmu.get())
@@ -507,6 +561,12 @@ class NGCTransformer:
             block.mlp.W_mlp2.weights.set(self.circuit.get_components(f"{b_prefix}_W_mlp2").weights.get())
             block.mlp.W_mlp1.biases.set(self.circuit.get_components(f"{b_prefix}_W_mlp1").biases.get())
             block.mlp.W_mlp2.biases.set(self.circuit.get_components(f"{b_prefix}_W_mlp2").biases.get())
+            block.attention.W_q.opt_params.set(self.circuit.get_components(f"{b_prefix}_W_q").opt_params.get())
+            block.attention.W_k.opt_params.set(self.circuit.get_components(f"{b_prefix}_W_k").opt_params.get())
+            block.attention.W_v.opt_params.set(self.circuit.get_components(f"{b_prefix}_W_v").opt_params.get())
+            block.attention.W_attn_out.opt_params.set(self.circuit.get_components(f"{b_prefix}_W_attn_out").opt_params.get())
+            block.mlp.W_mlp1.opt_params.set(self.circuit.get_components(f"{b_prefix}_W_mlp1").opt_params.get())
+            block.mlp.W_mlp2.opt_params.set(self.circuit.get_components(f"{b_prefix}_W_mlp2").opt_params.get())
 
             # --- Map Projection Block ---
             block_proj.q_qkv_Ratecell.z.set(  self.circuit.get_components(f"{p_prefix}_q_qkv_Ratecell").z.get())
