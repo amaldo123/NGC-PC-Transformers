@@ -5,6 +5,10 @@ from ngclearn.utils.distribution_generator import DistributionGenerator as dist
 from config import Config as config
 from utils.errorcell import GaussianErrorCell as ErrorCell
 from utils.ratecell import RateCell
+from utils.init_utils import scaled_xavier_uniform
+
+# Choose weight initializer based on config
+_w_init = scaled_xavier_uniform(config.init_scale) if getattr(config, "init_scale", None) else dist.fan_in_gaussian()
 
 class MLP:
     """
@@ -22,10 +26,10 @@ class MLP:
         self.z_mlp = RateCell(f"{prefix}z_mlp", n_units=n_embed, tau_m=tau_m, act_fx=config.act_fx, threshold=(config.threshold_type, config.threshold_lambda), batch_size=batch_size * seq_len)
         self.z_mlp2 = RateCell(f"{prefix}z_mlp2", n_units= 4* n_embed, tau_m= tau_m, act_fx="gelu", threshold=(config.threshold_type, config.threshold_lambda), batch_size=batch_size * seq_len)
         
-        self.W_mlp1 = HebbianSynapse(f"{prefix}W_mlp1", shape=(n_embed, 4*n_embed), batch_size = batch_size * seq_len, eta=eta, weight_init=dist.fan_in_gaussian(),
+        self.W_mlp1 = HebbianSynapse(f"{prefix}W_mlp1", shape=(n_embed, 4*n_embed), batch_size = batch_size * seq_len, eta=eta, weight_init=_w_init,
                                      bias_init=dist.constant(value=0.), w_bound=1., optim_type=optim_type, sign_value=-1., prior=("constant", 0.), key=subkeys[4]
                                     )
-        self.W_mlp2 = HebbianSynapse(f"{prefix}W_mlp2", shape=(4*n_embed, n_embed), batch_size= batch_size * seq_len, eta=eta, weight_init=dist.fan_in_gaussian(),
+        self.W_mlp2 = HebbianSynapse(f"{prefix}W_mlp2", shape=(4*n_embed, n_embed), batch_size= batch_size * seq_len, eta=eta, weight_init=_w_init,
                                      bias_init=dist.constant(value=0.), w_bound=1., optim_type=optim_type, sign_value=-1., prior=("constant", 0.), key=subkeys[5]
                                     )
         

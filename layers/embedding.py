@@ -4,6 +4,10 @@ from ngclearn.utils.distribution_generator import DistributionGenerator as dist
 from config import Config as config
 from utils.embed_utils import EmbeddingSynapse
 from jax import random
+from utils.init_utils import scaled_xavier_uniform
+
+# Choose weight initializer based on config
+_w_init = scaled_xavier_uniform(config.init_scale) if getattr(config, "init_scale", None) else dist.fan_in_gaussian()
 
 class EMBEDDING:
     """
@@ -29,7 +33,7 @@ class EMBEDDING:
                 w_bound=1.,
                 is_nonnegative=False,
                 prior=("constant", 0.),
-                weight_init=dist.fan_in_gaussian(),
+                weight_init=_w_init,
                 key=subkeys[0])
             
         self.e_embed = ErrorCell("e_embed", n_units=embed_dim, 

@@ -47,6 +47,11 @@ class Config:
     # Global toggle for residual (skip) connections in transformer blocks
     use_residual = False
 
+    # Scaled Xavier init: multiplier on standard Xavier limit.
+    # Lower values (0.1-0.3) give gentler starts for PC relaxation.
+    # Set to 1.0 to recover standard Xavier. Set to None to use fan_in_gaussian.
+    init_scale = 0.25
+
     # "tinyshakespeare", "ptb", "rottentomatoes" "wikitext2", "wikitext103", ""
     dataset = "tinyshakespeare"
 

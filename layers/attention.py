@@ -7,6 +7,10 @@ from utils.attention_utils import AttentionBlock
 from utils.errorcell import GaussianErrorCell as ErrorCell
 from utils.ratecell import RateCell
 from utils.attn_ratecell import AttnRateCell
+from utils.init_utils import scaled_xavier_uniform
+
+# Choose weight initializer based on config
+_w_init = scaled_xavier_uniform(config.init_scale) if getattr(config, "init_scale", None) else dist.fan_in_gaussian()
 
 
 class Attention:
@@ -42,17 +46,17 @@ class Attention:
                             act_fx=config.act_fx, batch_size=batch_size * seq_len )
         
         self.W_q = HebbianSynapse(f"{prefix}W_q", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                                weight_init=dist.fan_in_gaussian(),
+                                weight_init=_w_init,
                                 bias_init=dist.constant(value=0.), w_bound=1., 
                                 optim_type=optim_type, sign_value= -1.0, key=subkeys[0],prior=("constant", 0.))
         
         self.W_k = HebbianSynapse(f"{prefix}W_k", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                                weight_init=dist.fan_in_gaussian(),
+                                weight_init=_w_init,
                                 bias_init=dist.constant(value=0.), w_bound=1., 
                                 optim_type=optim_type, sign_value= -1.0, key=subkeys[1],prior=("constant", 0.))
         
         self.W_v = HebbianSynapse(f"{prefix}W_v", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                                weight_init=dist.fan_in_gaussian(),
+                                weight_init=_w_init,
                                 bias_init=dist.constant(value=0.), w_bound=1., 
                                 optim_type=optim_type, sign_value= -1.0, key=subkeys[2],prior=("constant", 0.))
        
@@ -62,7 +66,7 @@ class Attention:
                                        batch_size=batch_size)
         
         self.W_attn_out = HebbianSynapse(f"{prefix}W_attn_out", shape=(n_embed, n_embed), batch_size=batch_size * seq_len, eta=eta,
-                            weight_init=dist.fan_in_gaussian(),
+                            weight_init=_w_init,
                             bias_init=dist.constant(value=0.), w_bound=1., 
                             optim_type=optim_type, sign_value= -1.0, key=subkeys[3], prior=("constant", 0.))
         self.e_qkv = ErrorCell(f"{prefix}e_qkv", n_units=n_embed, batch_size=batch_size * seq_len) 

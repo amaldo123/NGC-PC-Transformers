@@ -4,6 +4,10 @@ from ngclearn.utils.distribution_generator import DistributionGenerator as dist
 from config import Config as config
 from utils.errorcell import GaussianErrorCell as ErrorCell
 from utils.ratecell import RateCell
+from utils.init_utils import scaled_xavier_uniform
+
+# Choose weight initializer based on config
+_w_init = scaled_xavier_uniform(config.init_scale) if getattr(config, "init_scale", None) else dist.fan_in_gaussian()
 
 
 class Output:
@@ -30,7 +34,7 @@ class Output:
         self.z_out = RateCell("z_out", n_units=n_embed, tau_m=config.tau_o, act_fx=config.act_fx_o, batch_size=batch_size * seq_len)
         
         self.W_out = HebbianSynapse("W_out", shape=(n_embed, vocab_size), batch_size= batch_size * seq_len, 
-                                    weight_init=dist.fan_in_gaussian(), 
+                                    weight_init=_w_init, 
                                     bias_init=dist.constant(value=0.), 
                                     prior=("constant", 0.), 
                                     sign_value=-1., 
