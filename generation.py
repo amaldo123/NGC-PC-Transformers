@@ -217,19 +217,32 @@ if __name__ == "__main__":
                 "BPE tokenizer not trained or loaded!\n\n"
             )
 
-    rng = jax.random.PRNGKey(0)
-    rng, key_1 = jax.random.split(rng)
-    rng, key_2 = jax.random.split(rng)
+    import time
+    rng = jax.random.PRNGKey(42)
+    key_no_cache, key_cache = jax.random.split(rng)
 
-    print("\nFINAL GENERATED 1:\n")
-    generated_1 = generate_text(
-        model,
-        tokenizer,
-        max_new_tokens=200,
-        temperature=0.8,
-        top_k=50,
-        key=key_1,
+    print("\n--- Generating WITHOUT KV Cache ---")
+    t0 = time.time()
+    generated_no_cache = generate_text(
+        model, tokenizer, max_new_tokens=100, temperature=0.8, top_k=50, key=key_no_cache, use_kv_cache=False
     )
-    print(generated_1)
+    t_no_cache = time.time() - t0
+
+    print("\n--- Generating WITH KV Cache ---")
+    t0 = time.time()
+    generated_cache = generate_text(
+        model, tokenizer, max_new_tokens=100, temperature=0.8, top_k=50, key=key_cache, use_kv_cache=True
+    )
+    t_cache = time.time() - t0
+
+    speedup = t_no_cache / max(t_cache, 1e-5)
+    print("\n=======================================================")
+    print(f"WITHOUT KV Cache Time : {t_no_cache:.3f} seconds")
+    print(f"WITH KV Cache Time    : {t_cache:.3f} seconds")
+    print(f"Speedup Factor        : {speedup:.1f}x FASTER!")
+    print("=======================================================\n")
+    print("GENERATED TEXT (KV Cache Enabled):")
+    print(generated_cache)
+
 
     
