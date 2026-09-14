@@ -218,31 +218,35 @@ if __name__ == "__main__":
             )
 
     import time
-    rng = jax.random.PRNGKey(42)
-    key_no_cache, key_cache = jax.random.split(rng)
+    seed_key = jax.random.PRNGKey(42)
 
     print("\n--- Generating WITHOUT KV Cache ---")
     t0 = time.time()
     generated_no_cache = generate_text(
-        model, tokenizer, max_new_tokens=100, temperature=0.8, top_k=50, key=key_no_cache, use_kv_cache=False
+        model, tokenizer, max_new_tokens=100, temperature=0.8, top_k=50, key=seed_key, use_kv_cache=False
     )
     t_no_cache = time.time() - t0
 
     print("\n--- Generating WITH KV Cache ---")
     t0 = time.time()
     generated_cache = generate_text(
-        model, tokenizer, max_new_tokens=100, temperature=0.8, top_k=50, key=key_cache, use_kv_cache=True
+        model, tokenizer, max_new_tokens=100, temperature=0.8, top_k=50, key=seed_key, use_kv_cache=True
     )
     t_cache = time.time() - t0
 
     speedup = t_no_cache / max(t_cache, 1e-5)
+    is_match = (generated_no_cache == generated_cache)
+    match_status = "EXACT MATCH (100% Identical) ✓" if is_match else "MISMATCH ✗"
+
     print("\n=======================================================")
     print(f"WITHOUT KV Cache Time : {t_no_cache:.3f} seconds")
     print(f"WITH KV Cache Time    : {t_cache:.3f} seconds")
     print(f"Speedup Factor        : {speedup:.1f}x FASTER!")
+    print(f"Output Verification   : {match_status}")
     print("=======================================================\n")
     print("GENERATED TEXT (KV Cache Enabled):")
     print(generated_cache)
+
 
 
     
