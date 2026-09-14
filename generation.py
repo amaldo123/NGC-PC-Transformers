@@ -147,6 +147,13 @@ def generate_text(
 
 # Initialize the model and tokenizer only when run as a script
 if __name__ == "__main__":
+    ckpt_path = Path("exp") / "ngc_transformer" / "contextData.json"
+    load_dir = "exp" if ckpt_path.exists() else None
+    if load_dir is None:
+        print("Note: No saved checkpoint found at exp/ngc_transformer. Generating with initial model weights. Run 'python train.py' first to train the model.")
+    else:
+        print("Loading trained checkpoint from exp/...")
+
     # Initialize the model
     dkey = jax.random.PRNGKey(0)
     model = NGCTransformer(
@@ -164,7 +171,7 @@ if __name__ == "__main__":
         eta=config.eta, 
         dropout_rate=config.dropout_rate, 
         exp_dir="exp",
-        loadDir="exp", # Ensure model is loaded from trained exp/ directory
+        loadDir=load_dir,
         pos_learnable=config.pos_learnable, 
         optim_type=config.optim_type, 
         wub=config.wub, 
@@ -172,6 +179,7 @@ if __name__ == "__main__":
         model_name="ngc_transformer",
         generate= True
     )
+
 
     # Optional: add custom weight stats here if needed
 
