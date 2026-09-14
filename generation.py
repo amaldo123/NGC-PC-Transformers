@@ -145,14 +145,26 @@ def generate_text(
 
 
 
+def find_checkpoint_dir(model_name="ngc_transformer"):
+    candidates = [
+        Path("exp"),
+        Path("../exp"),
+        Path("../../exp")
+    ]
+    for c in candidates:
+        if (c / model_name / "contextData.json").exists():
+            return str(c)
+    return None
+
+
 # Initialize the model and tokenizer only when run as a script
 if __name__ == "__main__":
-    ckpt_path = Path("exp") / "ngc_transformer" / "contextData.json"
-    load_dir = "exp" if ckpt_path.exists() else None
+    load_dir = find_checkpoint_dir("ngc_transformer")
     if load_dir is None:
-        print("Note: No saved checkpoint found at exp/ngc_transformer. Generating with initial model weights. Run 'python train.py' first to train the model.")
+        print("Note: No saved checkpoint found at exp/ngc_transformer (or ../exp). Generating with initial model weights. Run 'python train.py' first to train the model.")
     else:
-        print("Loading trained checkpoint from exp/...")
+        print(f"Loading trained checkpoint from {load_dir}...")
+
 
     # Initialize the model
     dkey = jax.random.PRNGKey(0)
