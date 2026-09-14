@@ -182,7 +182,7 @@ class NGCTransformer:
                     
                     block.attention.z_attn.zF >>block.attention.W_attn_out.inputs 
                     if getattr(config, "use_residual", False):
-                        block.attention.z_attn.z >> block.res1.x1
+                        block.attention.z_qkv.z >> block.res1.x1
                         block.attention.W_attn_out.outputs >> block.res1.x2
                         block.res1.outputs >> block.attention.e_attn.mu
                     else:
@@ -328,7 +328,7 @@ class NGCTransformer:
                     block_proj.q_attn_Ratecell.zF >> block_proj.Q_attn_out.inputs
                     
                     if getattr(config, "use_residual", False):
-                        block_proj.q_attn_Ratecell.z >> block_proj.res1.x1
+                        block_proj.q_qkv_Ratecell.z >> block_proj.res1.x1
                         block_proj.Q_attn_out.outputs >> block_proj.res1.x2
                         block_proj.res1.outputs >> block_proj.q_mlp_Ratecell.j
                     else:
