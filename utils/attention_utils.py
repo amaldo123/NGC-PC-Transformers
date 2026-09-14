@@ -7,28 +7,37 @@ from functools import partial
 import jax.numpy as jnp
 from utils.model_util import d_softmax_vjp
 
-@partial(jit, static_argnums=[4, 5, 6, 7, 8])
-def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, batch_size, key):
+def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, batch_size, key, kv_cache=None, layer_idx=None):
     """
-    Compute multi-head attention 
+    Compute multi-head attention with optional KV Caching.
     """
     B = batch_size
-    S = seq_len
-    D = Q.shape[-1]
-    
-    # Q_3d = Q.reshape(B, S, D)
-    # K_3d = K.reshape(B, S, D)
-    # V_3d = V.reshape(B, S, D)
-    
+    if len(Q.shape) == 3:
+        S_q = Q.shape[1]
+    else:
+        S_q = Q.shape[0] // B
+
+    if len(K.shape) == 3:
+        S_k = K.shape[1]
+    else:
+        S_k = K.shape[0] // B
+
     # Reshape for multi-head attention
-    q = Q.reshape((B, S, n_heads, d_head)).transpose([0, 2, 1, 3])
-    k = K.reshape((B, S, n_heads, d_head)).transpose([0, 2, 1, 3]) 
-    v = V.reshape((B, S, n_heads, d_head)).transpose([0, 2, 1, 3])
+    q = Q.reshape((B, S_q, n_heads, d_head)).transpose([0, 2, 1, 3])
+    k = K.reshape((B, S_k, n_heads, d_head)).transpose([0, 2, 1, 3]) 
+    v = V.reshape((B, S_k, n_heads, d_head)).transpose([0, 2, 1, 3])
+
+
+    if kv_cache is not None and layer_idx is not None:
+        k, v = kv_cache.update(layer_idx, k, v)
+    
+    S_k_total = k.shape[2]
+
     # Scaled dot-product attention
     s_c = jnp.einsum("BHTE,BHSE->BHTS", q, k) / jnp.sqrt(d_head)
     
-  
-    _mask = mask[None, None, :, :]  
+    dynamic_mask = jnp.tril(jnp.ones((S_q, S_k_total), dtype=bool), k=S_k_total - S_q)
+    _mask = dynamic_mask[None, None, :, :]  
     s_c = jnp.where(_mask, s_c, -1e9)
         
     score = jax.nn.softmax(s_c, axis=-1)
@@ -36,11 +45,10 @@ def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, ba
     
     if dropout_rate > 0.0:
         dkey = random.fold_in(key, 0)
-        # dkey = random.PRNGKey(0)
         score = jax.random.bernoulli(dkey, 1 - dropout_rate, score.shape) * score / (1 - dropout_rate)
         
     attention = jnp.einsum("BHTS,BHSE->BHTE", score, v)
-    attention = attention.transpose([0, 2, 1, 3]).reshape((B, S, -1))
+    attention = attention.transpose([0, 2, 1, 3]).reshape((B, S_q, -1))
     
     return attention, s_c, q, k, v
 
@@ -82,25 +90,6 @@ class AttentionBlock(JaxComponent):
     
     Takes Q, K, V inputs and computes scaled dot-product attention 
     with optional masking and dropout.
-    
-    | --- Compartments: ---
-    | inputs_q - query inputs
-    | inputs_k - key inputs  
-    | inputs_v - value inputs
-    | outputs - attention outputs
-    | key - JAX PRNG key
-    | dq - gradient w.r.t. query inputs
-    | dk - gradient w.r.t. key inputs
-    | dv - gradient w.r.t. value inputs
-    | dmu - = gradient w.r.t. mu inputs
-
-    Args:
-        name: Component name
-        n_heads: Number of attention heads
-        n_embed: Embedding dimension
-        seq_len: Sequence length
-        dropout_rate: Attention dropout rate
-        batch_size: Batch size
     """
     
     def __init__(self, name, n_heads, n_embed, seq_len, dropout_rate, batch_size, **kwargs):
@@ -113,6 +102,9 @@ class AttentionBlock(JaxComponent):
         self.seq_len = seq_len
         self.causal_mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=bool))
         
+        self.kv_cache = None
+        self.layer_idx = None
+
         if self.n_embed % self.n_heads != 0:
             raise ValueError(f"n_embed={n_embed} must be divisible by n_heads={n_heads}")
         self.d_head = n_embed // n_heads
@@ -139,7 +131,6 @@ class AttentionBlock(JaxComponent):
         inputs_k=self.inputs_k.get()
         inputs_v=self.inputs_v.get()
         mask=self.causal_mask
-        # S=self.S.get()
         dmu=self.dmu.get()
         n_heads=self.n_heads
         d_head=self.d_head
@@ -152,14 +143,16 @@ class AttentionBlock(JaxComponent):
             self.dropout_rate, 
             self.seq_len,
             self.batch_size,  
-            key                  
+            key,
+            kv_cache=self.kv_cache,
+            layer_idx=self.layer_idx
         )
-        # self.S.set(S)
         dq, dk, dv = compute_grads(q, k, v, mask, s_c, dmu, n_heads, d_head, dropout_rate, self.seq_len, self.batch_size, key)
         self.dq.set(dq)
         self.dk.set(dk)
         self.dv.set(dv)
         self.outputs.set(attention)
+
   
     @compilable
     def reset(self):

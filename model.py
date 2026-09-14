@@ -19,6 +19,7 @@ from ngcsimlib._src.global_state.manager import global_state_manager
 import numpy as np
 from utils.errorcell import GaussianErrorCell as ErrorCell
 from utils.ratecell import RateCell
+from utils.kv_cache import KVCache
 
 def _patch_jax_component_serialization():
     
@@ -493,7 +494,31 @@ class NGCTransformer:
         else:
             print("\nUsing normal for-loop advance")
 
+    def enable_kv_cache(self):
+        """Enable Key-Value caching across all attention blocks for fast generation."""
+        self.kv_cache = KVCache(self.n_layers)
+        for i in range(self.n_layers):
+            self.projection.blocks[i].q_attn_block.kv_cache = self.kv_cache
+            self.projection.blocks[i].q_attn_block.layer_idx = i
+            self.blocks[i].attention.attn_block.kv_cache = self.kv_cache
+            self.blocks[i].attention.attn_block.layer_idx = i
+
+    def disable_kv_cache(self):
+        """Disable Key-Value caching and reset cached state."""
+        self.kv_cache = None
+        for i in range(self.n_layers):
+            self.projection.blocks[i].q_attn_block.kv_cache = None
+            self.projection.blocks[i].q_attn_block.layer_idx = None
+            self.blocks[i].attention.attn_block.kv_cache = None
+            self.blocks[i].attention.attn_block.layer_idx = None
+
+    def reset_kv_cache(self):
+        """Clear cached Key and Value tensors."""
+        if hasattr(self, 'kv_cache') and self.kv_cache is not None:
+            self.kv_cache.reset()
+
     def clamp_input(self,x):
+
         self.embedding.z_embed.j.set(x)
         self.projection.q_embed_Ratecell.j.set(x) 
         

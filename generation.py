@@ -51,11 +51,12 @@ def generate_text(
     temperature: float = 1.0,
     top_k: int = 0,
     key=None,
-    pad_token_id: int = None
+    pad_token_id: int = None,
+    use_kv_cache: bool = True
 ):
     """
     Generate text using the model and provided tokenizer.
-    Works with both custom BPE,character and tiktoken backends.
+    Supports fast KV Caching during generation.
     """
     if pad_token_id is None:
         if isinstance(tokenizer, BPETokenizer) and tokenizer.tokenizer is not None:
@@ -79,55 +80,69 @@ def generate_text(
     current_tokens = jnp.array([[start_token_id]], dtype=jnp.int32)
     current_key = key
 
-    for _ in range(max_new_tokens):
-        # Truncate context to fit model's seq_len
-        if current_tokens.shape[1] > config.seq_len:
-            input_seq = current_tokens[:, -config.seq_len:]
-        else:
-            input_seq = current_tokens
+    if use_kv_cache and hasattr(model, 'enable_kv_cache'):
+        model.enable_kv_cache()
 
-        # Pad to exactly seq_len if needed
-        if input_seq.shape[1] < config.seq_len:
-            pad_len = config.seq_len - input_seq.shape[1]
-            input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
-        
-        # Forward pass (no target clamping during inference)
-        dummy_target = jnp.zeros((config.batch_size * config.seq_len, config.vocab_size))
-
-        # Forward pass
-
-        y_mu_inf, y_mu, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
-        logits = y_mu_inf.reshape(config.batch_size, config.seq_len, config.vocab_size)
-
-        # Get logits for the last *real* token (excluding padding)
-        if current_tokens.shape[1] > config.seq_len:
-            last_pos = config.seq_len - 1
-        else:
-            last_pos = current_tokens.shape[1] - 1
-        next_logits = logits[0, last_pos, :] / temperature
-
-        # Sample or take argmax
-        if current_key is not None:
-            if top_k is not None and top_k > 0:
-                top_k = min(top_k, config.vocab_size)
-                top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k)
-                probs = jax.nn.softmax(top_vals)
-                current_key, subkey = jax.random.split(current_key)
-                choice = jax.random.choice(subkey, a=top_k, p=probs)
-                next_token = top_idx[choice]
+    try:
+        for step in range(max_new_tokens):
+            if current_tokens.shape[1] > config.seq_len:
+                input_seq = current_tokens[:, -config.seq_len:]
             else:
-                probs = jax.nn.softmax(next_logits)
-                current_key, subkey = jax.random.split(current_key)
-                next_token = jax.random.choice(subkey, a=config.vocab_size, p=probs)
-        else:
-            next_token = jnp.argmax(next_logits)
+                input_seq = current_tokens
 
-        # Append new token
-        current_tokens = jnp.concatenate([current_tokens, next_token[None, None]], axis=1)
+            # Pad to exactly seq_len if needed
+            if input_seq.shape[1] < config.seq_len:
+                pad_len = config.seq_len - input_seq.shape[1]
+                input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
+            
+            bs = getattr(model, 'batch_size', config.batch_size)
+            vs = getattr(model, 'vocab_size', config.vocab_size)
+            sl = getattr(model, 'seq_len', config.seq_len)
+
+            cur_seq_len = sl
+            dummy_target = jnp.zeros((bs * cur_seq_len, vs))
+
+            # Forward pass
+            y_mu_inf, y_mu, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
+            logits = y_mu_inf.reshape(bs, cur_seq_len, vs)
+
+            if current_tokens.shape[1] > sl:
+                last_pos = sl - 1
+            else:
+                last_pos = current_tokens.shape[1] - 1
+
+            next_logits = logits[0, last_pos, :] / temperature
+
+
+
+            # Sample or take argmax
+            if current_key is not None:
+                if top_k is not None and top_k > 0:
+                    top_k = min(top_k, vs)
+                    top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k)
+                    probs = jax.nn.softmax(top_vals)
+                    current_key, subkey = jax.random.split(current_key)
+                    choice = jax.random.choice(subkey, a=top_k, p=probs)
+                    next_token = top_idx[choice]
+                else:
+                    probs = jax.nn.softmax(next_logits)
+                    current_key, subkey = jax.random.split(current_key)
+                    next_token = jax.random.choice(subkey, a=vs, p=probs)
+            else:
+                next_token = jnp.argmax(next_logits)
+
+
+            # Append new token
+            current_tokens = jnp.concatenate([current_tokens, next_token[None, None]], axis=1)
+
+    finally:
+        if use_kv_cache and hasattr(model, 'disable_kv_cache'):
+            model.disable_kv_cache()
 
     # Decode generated IDs back to text
     generated_ids = current_tokens[0].tolist()
     return tokenizer.decode(generated_ids)
+
 
 
 # Initialize the model and tokenizer only when run as a script

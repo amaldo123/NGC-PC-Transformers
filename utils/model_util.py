@@ -62,14 +62,16 @@ class ReshapeComponent(JaxComponent):
     
     @compilable
     def advance_state(self):
-        output=self.inputs.reshape(self.output_shape)
+        output = self.inputs.get().reshape(self.output_shape)
         self.outputs.set(output)
+
     
     
     @compilable
     def reset(self):
         self.inputs.set(jnp.zeros(self.input_shape))
         self.outputs.set(jnp.zeros(self.output_shape))
+
 
 class Outgrad(JaxComponent):
     """Compute the Jacobian matrix multiplication for the logits gradients
