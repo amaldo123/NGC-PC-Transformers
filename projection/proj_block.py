@@ -9,6 +9,9 @@ import jax.numpy as jnp
 from utils.model_util import ReshapeComponent
 
 
+from utils.residual_util import ResidualComponent
+
+
 class ProjBlock:
     def __init__(self, dkey, block_id, n_embed, seq_len, vocab_size,
                  batch_size, n_heads, dropout_rate, eta, optim_type, wub, wlb, **kwargs):
@@ -30,6 +33,10 @@ class ProjBlock:
         self.Q_attn_out = StaticSynapse(f"{prefix}Q_attn_out", shape=(n_embed, n_embed), bias_init=dist.constant(value=0.), key=subkeys[0])
         self.Q_mlp1 = StaticSynapse(f"{prefix}Q_mlp1", shape=(n_embed, 4 * n_embed), bias_init=dist.constant(value=0.), key=subkeys[0])
         self.Q_mlp2 = StaticSynapse(f"{prefix}Q_mlp2", shape=(4* n_embed, n_embed), bias_init=dist.constant(value=0.), key=subkeys[0])
+                        
+        if getattr(config, "use_residual", False):
+            self.res1 = ResidualComponent(f"{prefix}res1", shape=(batch_size * seq_len, n_embed))
+            self.res2 = ResidualComponent(f"{prefix}res2", shape=(batch_size * seq_len, n_embed))
                         
         
         self.reshape_3d_to_2d_proj1= ReshapeComponent(f"{prefix}reshape_3d_to_2d_proj1", 

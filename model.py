@@ -306,7 +306,10 @@ class NGCTransformer:
                     if b == 0:
                         self.projection.reshape_3d_to_2d_proj.outputs >> block_proj.q_qkv_Ratecell.j
                     else:
-                        self.projection.blocks[b - 1].Q_mlp2.outputs >> block_proj.q_qkv_Ratecell.j
+                        if getattr(config, "use_residual", False):
+                            self.projection.blocks[b - 1].res2.outputs >> block_proj.q_qkv_Ratecell.j
+                        else:
+                            self.projection.blocks[b - 1].Q_mlp2.outputs >> block_proj.q_qkv_Ratecell.j
 
                     block_proj.q_qkv_Ratecell.zF >> block_proj.Q_q.inputs
                     block_proj.q_qkv_Ratecell.zF >> block_proj.Q_k.inputs
@@ -323,19 +326,26 @@ class NGCTransformer:
                     block_proj.q_attn_block.outputs >> block_proj.reshape_3d_to_2d_proj1.inputs
                     block_proj.reshape_3d_to_2d_proj1.outputs >> block_proj.q_attn_Ratecell.j
                     block_proj.q_attn_Ratecell.zF >> block_proj.Q_attn_out.inputs
-                    block_proj.Q_attn_out.outputs >> block_proj.q_mlp_Ratecell.j
+                    
                     if getattr(config, "use_residual", False):
-                        block_proj.q_attn_Ratecell.z >> block_proj.q_mlp_Ratecell.j
+                        block_proj.q_attn_Ratecell.z >> block_proj.res1.x1
+                        block_proj.Q_attn_out.outputs >> block_proj.res1.x2
+                        block_proj.res1.outputs >> block_proj.q_mlp_Ratecell.j
+                    else:
+                        block_proj.Q_attn_out.outputs >> block_proj.q_mlp_Ratecell.j
+
                     block_proj.q_mlp_Ratecell.zF >> block_proj.Q_mlp1.inputs
                     block_proj.Q_mlp1.outputs >> block_proj.q_mlp2_Ratecell.j
                     block_proj.q_mlp2_Ratecell.zF >> block_proj.Q_mlp2.inputs
-                    if getattr(config, "use_residual", False):
-                        if b == n_layers - 1:
-                            block_proj.q_mlp_Ratecell.z >> self.projection.q_out_Ratecell.j
-                        else:
-                            block_proj.q_mlp_Ratecell.z >> self.projection.blocks[b + 1].q_qkv_Ratecell.j
 
-                self.projection.blocks[n_layers - 1].Q_mlp2.outputs >> self.projection.q_out_Ratecell.j
+                    if getattr(config, "use_residual", False):
+                        block_proj.q_mlp_Ratecell.z >> block_proj.res2.x1
+                        block_proj.Q_mlp2.outputs >> block_proj.res2.x2
+                        if b == n_layers - 1:
+                            block_proj.res2.outputs >> self.projection.q_out_Ratecell.j
+                    else:
+                        if b == n_layers - 1:
+                            block_proj.Q_mlp2.outputs >> self.projection.q_out_Ratecell.j
                 self.projection.q_out_Ratecell.zF >> self.projection.Q_out.inputs
                 self.projection.Q_out.outputs >> self.projection.q_target_Ratecell.j
 
@@ -468,10 +478,14 @@ class NGCTransformer:
                     project_process >> block_proj.reshape_3d_to_2d_proj1.advance_state
                     project_process >> block_proj.q_attn_Ratecell.advance_state
                     project_process >> block_proj.Q_attn_out.advance_state
+                    if getattr(config, "use_residual", False):
+                        project_process >> block_proj.res1.advance_state
                     project_process >> block_proj.q_mlp_Ratecell.advance_state
                     project_process >> block_proj.Q_mlp1.advance_state
                     project_process >> block_proj.q_mlp2_Ratecell.advance_state
                     project_process >> block_proj.Q_mlp2.advance_state
+                    if getattr(config, "use_residual", False):
+                        project_process >> block_proj.res2.advance_state
                     
                     reset_process >> block_proj.q_qkv_Ratecell.reset
                     reset_process >> block_proj.q_attn_block.reset
@@ -479,6 +493,9 @@ class NGCTransformer:
                     reset_process >> block_proj.q_mlp_Ratecell.reset
                     reset_process >> block_proj.q_mlp2_Ratecell.reset 
                     reset_process >> block_proj.reshape_3d_to_2d_proj1.reset
+                    if getattr(config, "use_residual", False):
+                        reset_process >> block_proj.res1.reset
+                        reset_process >> block_proj.res2.reset
                     ## ==============================================
                 
                 project_process >> self.projection.q_out_Ratecell.advance_state

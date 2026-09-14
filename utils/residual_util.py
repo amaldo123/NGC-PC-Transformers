@@ -49,3 +49,5 @@ class ResidualComponent(JaxComponent):
         self.dx1.set(zeros)
         self.dx2.set(zeros)
         self.dx.set(zeros)
+
+
