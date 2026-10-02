@@ -581,6 +581,51 @@ class NGCTransformer:
           
 
 
+    def prepare_for_generation(self):
+        """Sync projection weights from the generative model once before generation.
+        
+        During token generation, weights never change (no M-step). Calling this
+        once avoids re-doing ~30 .set()/.get() copies per layer on every single
+        token step, which is the dominant cost in process() at inference time.
+        """
+        self.projection.Q_embed.word_weights.set(self.embedding.W_embed.word_weights.get())
+        if self.embedding.W_embed.pos_learnable:
+            self.projection.Q_embed.pos_weights.set(self.embedding.W_embed.pos_weights.get())
+
+        for i in range(self.n_layers):
+            block = self.blocks[i]
+            block_proj = self.projection.blocks[i]
+
+            block_proj.Q_q.weights.set(block.attention.W_q.weights.get())
+            block_proj.Q_q.biases.set(block.attention.W_q.biases.get())
+            block_proj.Q_k.weights.set(block.attention.W_k.weights.get())
+            block_proj.Q_k.biases.set(block.attention.W_k.biases.get())
+            block_proj.Q_v.weights.set(block.attention.W_v.weights.get())
+            block_proj.Q_v.biases.set(block.attention.W_v.biases.get())
+            block_proj.Q_attn_out.weights.set(block.attention.W_attn_out.weights.get())
+            block_proj.Q_attn_out.biases.set(block.attention.W_attn_out.biases.get())
+            block_proj.Q_mlp1.weights.set(block.mlp.W_mlp1.weights.get())
+            block_proj.Q_mlp1.biases.set(block.mlp.W_mlp1.biases.get())
+            block_proj.Q_mlp2.weights.set(block.mlp.W_mlp2.weights.get())
+            block_proj.Q_mlp2.biases.set(block.mlp.W_mlp2.biases.get())
+
+        self.projection.Q_out.weights.set(self.output.W_out.weights.get())
+        self.projection.Q_out.biases.set(self.output.W_out.biases.get())
+        self._generation_ready = True
+
+    def generate_step(self, obs, lab):
+        """Lightweight inference step for autoregressive generation.
+        
+        Skips the weight sync block (handled once by prepare_for_generation()).
+        Only does: reset → clamp → project → return logits.
+        Must call prepare_for_generation() before the first token.
+        """
+        self.reset.run()
+        self.clamp_input(obs)
+        self.clamp_infer_target(lab)
+        self.project.run(t=0., dt=1.)
+        return self.projection.q_target_Ratecell.zF.get()
+
     def process(self, obs, lab, adapt_synapses=True):
 
         # ══════  Inference  ════════════════════════════════════════

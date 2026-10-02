@@ -81,8 +81,16 @@ def generate_text(
     vs = getattr(model, 'vocab_size', config.vocab_size)
     sl = getattr(model, 'seq_len', config.seq_len)
 
+    # Sync projection weights ONCE — they don't change during generation.
+    # Skips ~30 .get()/.set() copies per layer that dominate per-token cost.
+    if hasattr(model, 'prepare_for_generation'):
+        model.prepare_for_generation()
+
     if use_kv_cache and hasattr(model, 'enable_kv_cache'):
         model.enable_kv_cache()
+
+    # Allocate dummy target once (reused every token step)
+    dummy_target = jnp.zeros((bs * sl, vs))
 
     try:
         for step in range(max_new_tokens):
@@ -124,10 +132,11 @@ def generate_text(
                 else:
                     decode_pos = current_tokens.shape[1] - 1
 
-            dummy_target = jnp.zeros((bs * sl, vs))
-
-            # Forward pass
-            y_mu_inf, _, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
+            # Forward pass — use lightweight generate_step if available
+            if hasattr(model, 'generate_step') and getattr(model, '_generation_ready', False):
+                y_mu_inf = model.generate_step(input_seq, dummy_target)
+            else:
+                y_mu_inf, _, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
             logits = y_mu_inf.reshape(bs, sl, vs)
 
             next_logits = logits[0, decode_pos, :] / temperature
