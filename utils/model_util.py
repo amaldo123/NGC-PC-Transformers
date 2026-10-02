@@ -62,7 +62,7 @@ class ReshapeComponent(JaxComponent):
     
     @compilable
     def advance_state(self):
-        output=self.inputs.reshape(self.output_shape)
+        output = self.inputs.get().reshape(self.output_shape)
         self.outputs.set(output)
     
     

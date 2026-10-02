@@ -40,9 +40,6 @@ import re
 import textwrap
 
 
-
-
-
 def generate_text(
     model,
     tokenizer,
@@ -51,11 +48,12 @@ def generate_text(
     temperature: float = 1.0,
     top_k: int = 0,
     key=None,
-    pad_token_id: int = None
+    pad_token_id: int = None,
+    use_kv_cache: bool = True
 ):
     """
     Generate text using the model and provided tokenizer.
-    Works with both custom BPE,character and tiktoken backends.
+    Supports fast KV Caching during generation.
     """
     if pad_token_id is None:
         if isinstance(tokenizer, BPETokenizer) and tokenizer.tokenizer is not None:
@@ -79,59 +77,82 @@ def generate_text(
     current_tokens = jnp.array([[start_token_id]], dtype=jnp.int32)
     current_key = key
 
-    for _ in range(max_new_tokens):
-        # Truncate context to fit model's seq_len
-        if current_tokens.shape[1] > config.seq_len:
-            input_seq = current_tokens[:, -config.seq_len:]
-        else:
-            input_seq = current_tokens
+    if use_kv_cache and hasattr(model, 'enable_kv_cache'):
+        model.enable_kv_cache()
 
-        # Pad to exactly seq_len if needed
-        if input_seq.shape[1] < config.seq_len:
-            pad_len = config.seq_len - input_seq.shape[1]
-            input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
-        
-        # Forward pass (no target clamping during inference)
-        dummy_target = jnp.zeros((config.batch_size * config.seq_len, config.vocab_size))
-
-        # Forward pass
-
-        y_mu_inf, y_mu, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
-        logits = y_mu_inf.reshape(config.batch_size, config.seq_len, config.vocab_size)
-
-        # Get logits for the last *real* token (excluding padding)
-        if current_tokens.shape[1] > config.seq_len:
-            last_pos = config.seq_len - 1
-        else:
-            last_pos = current_tokens.shape[1] - 1
-        next_logits = logits[0, last_pos, :] / temperature
-
-        # Sample or take argmax
-        if current_key is not None:
-            if top_k is not None and top_k > 0:
-                top_k = min(top_k, config.vocab_size)
-                top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k)
-                probs = jax.nn.softmax(top_vals)
-                current_key, subkey = jax.random.split(current_key)
-                choice = jax.random.choice(subkey, a=top_k, p=probs)
-                next_token = top_idx[choice]
+    try:
+        for step in range(max_new_tokens):
+            if current_tokens.shape[1] > config.seq_len:
+                input_seq = current_tokens[:, -config.seq_len:]
             else:
-                probs = jax.nn.softmax(next_logits)
-                current_key, subkey = jax.random.split(current_key)
-                next_token = jax.random.choice(subkey, a=config.vocab_size, p=probs)
-        else:
-            next_token = jnp.argmax(next_logits)
+                input_seq = current_tokens
 
-        # Append new token
-        current_tokens = jnp.concatenate([current_tokens, next_token[None, None]], axis=1)
+            # Pad to exactly seq_len if needed
+            if input_seq.shape[1] < config.seq_len:
+                pad_len = config.seq_len - input_seq.shape[1]
+                input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
+            
+            bs = getattr(model, 'batch_size', config.batch_size)
+            vs = getattr(model, 'vocab_size', config.vocab_size)
+            sl = getattr(model, 'seq_len', config.seq_len)
+
+            cur_seq_len = sl
+            dummy_target = jnp.zeros((bs * cur_seq_len, vs))
+
+            # Forward pass
+            y_mu_inf, y_mu, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
+            logits = y_mu_inf.reshape(bs, cur_seq_len, vs)
+
+            if current_tokens.shape[1] > sl:
+                last_pos = sl - 1
+            else:
+                last_pos = current_tokens.shape[1] - 1
+
+            next_logits = logits[0, last_pos, :] / temperature
+
+            # Sample or take argmax
+            if current_key is not None:
+                if top_k is not None and top_k > 0:
+                    top_k = min(top_k, vs)
+                    top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k)
+                    probs = jax.nn.softmax(top_vals)
+                    current_key, subkey = jax.random.split(current_key)
+                    choice = jax.random.choice(subkey, a=top_k, p=probs)
+                    next_token = top_idx[choice]
+                else:
+                    probs = jax.nn.softmax(next_logits)
+                    current_key, subkey = jax.random.split(current_key)
+                    next_token = jax.random.choice(subkey, a=vs, p=probs)
+            else:
+                next_token = jnp.argmax(next_logits)
+
+            # Append new token
+            current_tokens = jnp.concatenate([current_tokens, next_token[None, None]], axis=1)
+
+    finally:
+        if use_kv_cache and hasattr(model, 'disable_kv_cache'):
+            model.disable_kv_cache()
 
     # Decode generated IDs back to text
     generated_ids = current_tokens[0].tolist()
     return tokenizer.decode(generated_ids)
 
 
+def find_checkpoint_dir(model_name="ngc_transformer"):
+    candidate = Path("exp")
+    if (candidate / model_name / "contextData.json").exists():
+        return str(candidate)
+    return None
+
+
 # Initialize the model and tokenizer only when run as a script
 if __name__ == "__main__":
+    load_dir = find_checkpoint_dir("ngc_transformer")
+    if load_dir is None:
+        print("Note: No saved checkpoint found at exp/ngc_transformer. Generating with initial model weights. Run 'python train.py' first to train the model.")
+    else:
+        print(f"Loading trained checkpoint from {load_dir}...")
+
     # Initialize the model
     dkey = jax.random.PRNGKey(0)
     model = NGCTransformer(
@@ -149,7 +170,7 @@ if __name__ == "__main__":
         eta=config.eta, 
         dropout_rate=config.dropout_rate, 
         exp_dir="exp",
-        loadDir="exp", # Ensure model is loaded from trained exp/ directory
+        loadDir=load_dir,
         pos_learnable=config.pos_learnable, 
         optim_type=config.optim_type, 
         wub=config.wub, 
@@ -158,14 +179,11 @@ if __name__ == "__main__":
         generate= True
     )
 
-    # Optional: add custom weight stats here if needed
-
     tokenizer = get_tokenizer(config)
 
     if isinstance(tokenizer, BPETokenizer) and tokenizer.tokenizer is None:
         vocab_file = getattr(config, "tokenizer_vocab_file", None)
         if vocab_file is None:
-            # default_path = Path(__file__).parent / "data_preprocess" / "outputs" / "tokenizer" / "bpe_tokenizer.json"
             from data_preprocess.datasets_registry import prepare_dataset
             _, output_dir = prepare_dataset(config.dataset)
             default_path = output_dir / "tokenizer" / "bpe_tokenizer.json"
@@ -182,19 +200,25 @@ if __name__ == "__main__":
                 "BPE tokenizer not trained or loaded!\n\n"
             )
 
-    rng = jax.random.PRNGKey(0)
-    rng, key_1 = jax.random.split(rng)
-    rng, key_2 = jax.random.split(rng)
+    import time
+    seed_key = jax.random.PRNGKey(config.SEED)
+    use_kv_cache = getattr(config, "use_kv_cache", True)
 
-    print("\nFINAL GENERATED 1:\n")
-    generated_1 = generate_text(
-        model,
-        tokenizer,
+    cache_label = "WITH KV Cache" if use_kv_cache else "WITHOUT KV Cache"
+    print(f"\n--- Generating {cache_label} ---")
+
+    t0 = time.time()
+    generated_text = generate_text(
+        model, tokenizer,
         max_new_tokens=200,
         temperature=0.8,
         top_k=50,
-        key=key_1,
+        key=seed_key,
+        use_kv_cache=use_kv_cache
     )
-    print(generated_1)
+    elapsed = time.time() - t0
 
-    
+    print(f"\nGeneration time : {elapsed:.3f} seconds")
+    print(f"KV Cache        : {'Enabled' if use_kv_cache else 'Disabled'}")
+    print("\nGENERATED TEXT:")
+    print(generated_text)
