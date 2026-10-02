@@ -77,47 +77,69 @@ def generate_text(
     current_tokens = jnp.array([[start_token_id]], dtype=jnp.int32)
     current_key = key
 
+    bs = getattr(model, 'batch_size', config.batch_size)
+    vs = getattr(model, 'vocab_size', config.vocab_size)
+    sl = getattr(model, 'seq_len', config.seq_len)
+
     if use_kv_cache and hasattr(model, 'enable_kv_cache'):
         model.enable_kv_cache()
 
     try:
         for step in range(max_new_tokens):
-            if current_tokens.shape[1] > config.seq_len:
-                input_seq = current_tokens[:, -config.seq_len:]
+
+            if use_kv_cache and step > 0:
+                # ── DECODE STEP: feed only the last token ──────────────────────
+                # The KV cache already holds all past K and V.
+                # We only need to compute K/V for the ONE new token, so we pass
+                # a single-token input (still padded to seq_len for model compat,
+                # but the new token is placed at position 0 and the cache handles
+                # the full context history).
+                #
+                # NOTE: Because this model's architecture requires a fixed
+                # (batch_size, seq_len) shaped input, we still pad to seq_len but
+                # only the first position (the new token) carries real content.
+                # The KV cache concatenates this new token's K/V onto the past,
+                # so attention still covers the full generation history.
+                last_token = current_tokens[:, -1:]  # shape (1, 1)
+                pad_len = sl - 1
+                input_seq = jnp.pad(last_token, ((0, 0), (0, pad_len)),
+                                    constant_values=pad_token_id)
+                # We only read logits at position 0 (the new token's position)
+                decode_pos = 0
             else:
-                input_seq = current_tokens
+                # ── PREFILL STEP (step 0): feed the full context ───────────────
+                if current_tokens.shape[1] > sl:
+                    input_seq = current_tokens[:, -sl:]
+                else:
+                    input_seq = current_tokens
 
-            # Pad to exactly seq_len if needed
-            if input_seq.shape[1] < config.seq_len:
-                pad_len = config.seq_len - input_seq.shape[1]
-                input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
-            
-            bs = getattr(model, 'batch_size', config.batch_size)
-            vs = getattr(model, 'vocab_size', config.vocab_size)
-            sl = getattr(model, 'seq_len', config.seq_len)
+                if input_seq.shape[1] < sl:
+                    pad_len = sl - input_seq.shape[1]
+                    input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)),
+                                        constant_values=pad_token_id)
 
-            cur_seq_len = sl
-            dummy_target = jnp.zeros((bs * cur_seq_len, vs))
+                # Read from last *real* token position
+                if current_tokens.shape[1] > sl:
+                    decode_pos = sl - 1
+                else:
+                    decode_pos = current_tokens.shape[1] - 1
+
+            dummy_target = jnp.zeros((bs * sl, vs))
 
             # Forward pass
-            y_mu_inf, y_mu, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
-            logits = y_mu_inf.reshape(bs, cur_seq_len, vs)
+            y_mu_inf, _, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
+            logits = y_mu_inf.reshape(bs, sl, vs)
 
-            if current_tokens.shape[1] > sl:
-                last_pos = sl - 1
-            else:
-                last_pos = current_tokens.shape[1] - 1
-
-            next_logits = logits[0, last_pos, :] / temperature
+            next_logits = logits[0, decode_pos, :] / temperature
 
             # Sample or take argmax
             if current_key is not None:
                 if top_k is not None and top_k > 0:
-                    top_k = min(top_k, vs)
-                    top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k)
+                    top_k_val = min(top_k, vs)
+                    top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k_val)
                     probs = jax.nn.softmax(top_vals)
                     current_key, subkey = jax.random.split(current_key)
-                    choice = jax.random.choice(subkey, a=top_k, p=probs)
+                    choice = jax.random.choice(subkey, a=top_k_val, p=probs)
                     next_token = top_idx[choice]
                 else:
                     probs = jax.nn.softmax(next_logits)

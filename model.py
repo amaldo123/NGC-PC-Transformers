@@ -683,8 +683,12 @@ class NGCTransformer:
         return y_mu_inf, y_mu, EFE
 
     def enable_kv_cache(self):
-        """Enable Key-Value caching across all attention blocks for fast generation."""
-        self.kv_cache = KVCache(self.n_layers)
+        """Enable Key-Value caching across all attention blocks for fast generation.
+        Always resets the cache so no stale tensors remain from a previous run.
+        max_seq_len caps unbounded K/V growth during long generations.
+        """
+        max_seq_len = getattr(self, 'seq_len', 32) * 10  # generous upper bound
+        self.kv_cache = KVCache(self.n_layers, max_seq_len=max_seq_len)
         for i in range(self.n_layers):
             self.projection.blocks[i].q_attn_block.kv_cache = self.kv_cache
             self.projection.blocks[i].q_attn_block.layer_idx = i
@@ -692,7 +696,7 @@ class NGCTransformer:
             self.blocks[i].attention.attn_block.layer_idx = i
 
     def disable_kv_cache(self):
-        """Disable Key-Value caching and reset cached state."""
+        """Disable Key-Value caching and clear cached state."""
         self.kv_cache = None
         for i in range(self.n_layers):
             self.projection.blocks[i].q_attn_block.kv_cache = None
@@ -701,7 +705,7 @@ class NGCTransformer:
             self.blocks[i].attention.attn_block.layer_idx = None
 
     def reset_kv_cache(self):
-        """Clear cached Key and Value tensors."""
+        """Clear cached Key and Value tensors without disabling the cache."""
         if hasattr(self, 'kv_cache') and self.kv_cache is not None:
             self.kv_cache.reset()
 
