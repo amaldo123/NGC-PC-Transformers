@@ -237,61 +237,32 @@ if __name__ == "__main__":
     TEMPERATURE    = 0.8
     TOP_K          = 50
 
-    print("\n" + "═" * 60)
-    print("  KV CACHE EXPERIMENT — Generation Speed Comparison")
-    print("═" * 60)
-    print(f"  Tokens to generate : {MAX_NEW_TOKENS}")
-    print(f"  Temperature        : {TEMPERATURE}")
-    print(f"  Top-k              : {TOP_K}")
-    print(f"  Layers             : {config.n_layers}")
-    print(f"  Seq len            : {config.seq_len}")
-    print(f"  n_embed            : {config.n_embed}")
-    print("═" * 60)
+    # Read mode from config — flip config.use_kv_cache to switch between modes
+    use_kv_cache = getattr(config, "use_kv_cache", True)
+    mode_label   = "WITH KV Cache" if use_kv_cache else "WITHOUT KV Cache"
 
-    results = {}
+    print(f"\n{'─'*50}")
+    print(f"  Generating {mode_label}")
+    print(f"{'─'*50}")
 
-    for use_kv_cache in [False, True]:
-        label = "WITH KV Cache   " if use_kv_cache else "WITHOUT KV Cache"
-        seed_key = jax.random.PRNGKey(config.SEED)  # same seed both runs
+    seed_key = jax.random.PRNGKey(config.SEED)
+    t0 = time.time()
+    generated_text = generate_text(
+        model, tokenizer,
+        max_new_tokens=MAX_NEW_TOKENS,
+        temperature=TEMPERATURE,
+        top_k=TOP_K,
+        key=seed_key,
+        use_kv_cache=use_kv_cache,
+    )
+    elapsed = time.time() - t0
 
-        print(f"\n[RUN] {label} ...")
-        t0 = time.time()
-        text = generate_text(
-            model, tokenizer,
-            max_new_tokens=MAX_NEW_TOKENS,
-            temperature=TEMPERATURE,
-            top_k=TOP_K,
-            key=seed_key,
-            use_kv_cache=use_kv_cache,
-        )
-        elapsed = time.time() - t0
+    print(f"\n  Time    : {elapsed:.3f}s")
+    print(f"  Tokens/s: {MAX_NEW_TOKENS / elapsed:.1f}")
+    print(f"  KV Cache: {'Enabled' if use_kv_cache else 'Disabled'}")
+    print(f"\n{'─'*50}")
+    print("  GENERATED TEXT")
+    print(f"{'─'*50}")
+    print(generated_text)
 
-        results[label.strip()] = {"time": elapsed, "text": text}
-        print(f"  ✓ done in {elapsed:.3f}s")
-
-    # ── Print comparison table ──────────────────────────────────────────────
-    t_no  = results["WITHOUT KV Cache"]["time"]
-    t_yes = results["WITH KV Cache"]["time"]
-    speedup = t_no / t_yes if t_yes > 0 else float("inf")
-
-    print("\n")
-    print("═" * 60)
-    print("  RESULTS")
-    print("═" * 60)
-    print(f"  {'Mode':<22} {'Time (s)':>10}  {'Tokens/s':>10}")
-    print(f"  {'-'*22} {'-'*10}  {'-'*10}")
-    print(f"  {'WITHOUT KV Cache':<22} {t_no:>10.3f}  {MAX_NEW_TOKENS/t_no:>10.1f}")
-    print(f"  {'WITH KV Cache':<22} {t_yes:>10.3f}  {MAX_NEW_TOKENS/t_yes:>10.1f}")
-    print(f"  {'-'*22} {'-'*10}  {'-'*10}")
-    if speedup >= 1.0:
-        print(f"  Speedup (KV Cache):  {speedup:.2f}x faster")
-    else:
-        print(f"  Slowdown (KV Cache): {1/speedup:.2f}x slower  ← cache overhead > savings")
-    print("═" * 60)
-
-    print("\n── WITHOUT KV Cache — Generated Text ──────────────────────")
-    print(results["WITHOUT KV Cache"]["text"])
-
-    print("\n── WITH KV Cache — Generated Text ─────────────────────────")
-    print(results["WITH KV Cache"]["text"])
 
