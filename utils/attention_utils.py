@@ -7,7 +7,6 @@ from functools import partial
 import jax.numpy as jnp
 from utils.model_util import d_softmax_vjp
 
-@partial(jit, static_argnums=[4, 5, 6, 7, 8])
 def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, batch_size, key, kv_cache=None, layer_idx=None):
     """
     Compute multi-head attention with optional KV Caching.
