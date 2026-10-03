@@ -241,6 +241,22 @@ if __name__ == "__main__":
     use_kv_cache = getattr(config, "use_kv_cache", True)
     mode_label   = "WITH KV Cache" if use_kv_cache else "WITHOUT KV Cache"
 
+    # ── JAX JIT Warmup ────────────────────────────────────────────────────────
+    # JAX compiles (traces) kernels on the very first call. Without warmup the
+    # timed run includes ~15-20s of compilation, making KV cache look slower.
+    # One 1-token dry-run triggers all JIT compilation before the timed run.
+    print("\n  Warming up JAX kernels (1-token dry run)...", end="", flush=True)
+    _ = generate_text(
+        model, tokenizer,
+        max_new_tokens=1,
+        temperature=TEMPERATURE,
+        top_k=TOP_K,
+        key=jax.random.PRNGKey(0),
+        use_kv_cache=use_kv_cache,
+    )
+    print(" done.")
+    # ─────────────────────────────────────────────────────────────────────────
+
     print(f"\n{'─'*50}")
     print(f"  Generating {mode_label}")
     print(f"{'─'*50}")
@@ -264,5 +280,6 @@ if __name__ == "__main__":
     print("  GENERATED TEXT")
     print(f"{'─'*50}")
     print(generated_text)
+
 
 
