@@ -189,49 +189,24 @@ if __name__ == "__main__":
                 "BPE tokenizer not trained or loaded!\n\n"
             )
 
-    rng = jax.random.PRNGKey(0)
-    rng, key_1 = jax.random.split(rng)
-    rng, key_2 = jax.random.split(rng)
+    seed_key = jax.random.PRNGKey(config.SEED)
+    use_kv_cache = getattr(config, "use_kv_cache", True)
 
-    MAX_TOKENS  = 200
-    TEMPERATURE = 0.8
-    TOP_K       = 50
+    cache_label = "WITH KV Cache" if use_kv_cache else "WITHOUT KV Cache"
+    print(f"\n--- Generating {cache_label} ---")
 
-    print("\n" + "=" * 60)
-    print("BENCHMARK: No Cache  vs  KV Cache")
-    print("=" * 60)
-
-    # --- No-cache run ---
-    t0 = time.perf_counter()
-    out_no_cache = generate_text(
+    t0 = time.time()
+    generated_text = generate_text(
         model, tokenizer,
-        max_new_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
-        top_k=TOP_K,
-        key=key_1,
-        use_kv_cache=False,
+        max_new_tokens=200,
+        temperature=0.8,
+        top_k=50,
+        key=seed_key,
+        use_kv_cache=use_kv_cache
     )
-    t_no_cache = time.perf_counter() - t0
+    elapsed = time.time() - t0
 
-    # --- KV-cache run ---
-    t0 = time.perf_counter()
-    out_kv_cache = generate_text(
-        model, tokenizer,
-        max_new_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
-        top_k=TOP_K,
-        key=key_2,
-        use_kv_cache=True,
-    )
-    t_kv_cache = time.perf_counter() - t0
-
-    # --- Results ---
-    speedup = t_no_cache / t_kv_cache if t_kv_cache > 0 else float("inf")
-    print(f"\n[No Cache]  {t_no_cache:.2f}s  ({MAX_TOKENS / t_no_cache:.1f} tok/s)")
-    print(f"[KV Cache]  {t_kv_cache:.2f}s  ({MAX_TOKENS / t_kv_cache:.1f} tok/s)")
-    print(f"Speedup:    {speedup:.2f}x")
-
-    print("\n-- No-Cache Output " + "-" * 42)
-    print(out_no_cache)
-    print("\n-- KV-Cache Output " + "-" * 42)
-    print(out_kv_cache)
+    print(f"\nGeneration time : {elapsed:.3f} seconds")
+    print(f"KV Cache        : {'Enabled' if use_kv_cache else 'Disabled'}")
+    print("\nGENERATED TEXT:")
+    print(generated_text)
