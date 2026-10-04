@@ -28,8 +28,37 @@ def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, ba
     v = V.reshape((B, S_k, n_heads, d_head)).transpose([0, 2, 1, 3])
 
     if kv_cache is not None and layer_idx is not None:
-        k, v = kv_cache.update(layer_idx, k, v)
-    
+        if kv_cache.k_cache[layer_idx] is None:
+            # Step 0: prompt step. Store initial prompt token (position 0).
+            k_slice = k[:, :, :1, :]
+            v_slice = v[:, :, :1, :]
+            q_slice = q[:, :, :1, :]
+            k_cat, v_cat = kv_cache.update(layer_idx, k_slice, v_slice)
+            new_idx = 0
+        else:
+            # Step t >= 1: single new token step.
+            curr_len = kv_cache.k_cache[layer_idx].shape[2]
+            new_idx = min(curr_len, k.shape[2] - 1)
+            k_slice = k[:, :, new_idx : new_idx + 1, :]
+            v_slice = v[:, :, new_idx : new_idx + 1, :]
+            q_slice = q[:, :, new_idx : new_idx + 1, :]
+            k_cat, v_cat = kv_cache.update(layer_idx, k_slice, v_slice)
+
+        # Scaled dot-product attention for 1 query token against accumulated real past+new keys/values
+        s_c = jnp.einsum("BHTE,BHSE->BHTS", q_slice, k_cat) / jnp.sqrt(d_head)
+        score = jax.nn.softmax(s_c, axis=-1).astype(q.dtype)
+
+        if dropout_rate > 0.0:
+            dkey = random.fold_in(key, 0)
+            score = jax.random.bernoulli(dkey, 1 - dropout_rate, score.shape) * score / (1 - dropout_rate)
+
+        attn_slice = jnp.einsum("BHTS,BHSE->BHTE", score, v_cat)
+        attn_slice_2d = attn_slice.transpose([0, 2, 1, 3]).reshape((B, 1, -1))
+
+        # Place output into full sequence buffer at new_idx
+        attention = jnp.zeros((B, S_q, Q.shape[-1])).at[:, new_idx : new_idx + 1, :].set(attn_slice_2d)
+        return attention, s_c, q_slice, k_cat, v_cat
+
     S_k_total = k.shape[2]
 
     # Scaled dot-product attention
