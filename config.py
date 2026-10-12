@@ -44,7 +44,8 @@ class Config:
     # set True to Use jax.lax.scan fused advance loop (faster, minor floating-point differences from the normal python loop)
     fused_advance = True
 
-    # Set to True to use KV Cache during generation (faster), False for standard full-context generation
+    # True: stand-alone KV-cache decoder (utils/fast_decode.py, exact, much faster).
+    # False: original full-context loop through model.process (reference / fallback).
     use_kv_cache = True
 
     # "tinyshakespeare", "ptb", "rottentomatoes" "wikitext2", "wikitext103", ""

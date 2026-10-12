@@ -5,7 +5,7 @@ import sys
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['XLA_FLAGS'] = '--xla_gpu_autotune_level=0 --xla_gpu_strict_conv_algorithm_picker=false --xla_cpu_use_thunk_runtime=false'
 os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
-os.environ['JAX_PLATFORM_NAME'] = 'gpu'
+os.environ.setdefault('JAX_PLATFORM_NAME', 'gpu')
 os.environ['JAX_ENABLE_X64'] = 'False'
 
 # Redirect stderr to suppress XLA warnings
@@ -17,7 +17,11 @@ warnings.filterwarnings('ignore')
 
 # Now import JAX and other libraries
 import jax
-jax.config.update('jax_platform_name', 'gpu')
+try:
+    jax.devices(os.environ.get('JAX_PLATFORM_NAME', 'gpu'))
+    jax.config.update('jax_platform_name', os.environ.get('JAX_PLATFORM_NAME', 'gpu'))
+except Exception:
+    jax.config.update('jax_platform_name', 'cpu')
 jax.config.update('jax_log_compiles', False)
 
 # Restore stderr after JAX initialization
@@ -34,6 +38,7 @@ import numpy as np
 from config import Config as config
 from data_preprocess.data_loader import DataLoader
 from data_preprocess.tokenizer import get_tokenizer, BPETokenizer, CharacterTokenizer
+from utils.fast_decode import extract_params, generate as fast_generate
 import re
 import textwrap
 import time
@@ -75,65 +80,76 @@ def generate_text(
     if start_token_id is None:
         start_token_id = pad_token_id
 
-    # Initialize sequence with start token ID
+    # Fast KV cache decoder path (Appendix A / B)
+    if use_kv_cache:
+        params = extract_params(model)
+        sl = getattr(model, 'seq_len', config.seq_len)
+        nh = getattr(model, 'n_heads', config.n_heads)
+        ids = fast_generate(
+            params,
+            start_token_id,
+            max_new_tokens,
+            sl,
+            nh,
+            temperature=temperature,
+            top_k=top_k,
+            key=key,
+            pad_id=pad_token_id,
+        )
+        return tokenizer.decode(ids)
+
+    # Legacy full-context loop fallback (use_kv_cache=False)
     current_tokens = jnp.array([[start_token_id]], dtype=jnp.int32)
     current_key = key
 
-    if use_kv_cache and hasattr(model, 'enable_kv_cache'):
-        model.enable_kv_cache()
+    sl = getattr(model, 'seq_len', config.seq_len)
+    bs = getattr(model, 'batch_size', config.batch_size)
+    vs = getattr(model, 'vocab_size', config.vocab_size)
 
-    try:
-        for step in range(max_new_tokens):
-            if current_tokens.shape[1] > config.seq_len:
-                input_seq = current_tokens[:, -config.seq_len:]
+    for step in range(max_new_tokens):
+        if current_tokens.shape[1] > sl:
+            input_seq = current_tokens[:, -sl:]
+        else:
+            input_seq = current_tokens
+
+        # Pad to exactly seq_len if needed
+        if input_seq.shape[1] < sl:
+            pad_len = sl - input_seq.shape[1]
+            input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
+        
+        cur_seq_len = sl
+        dummy_target = jnp.zeros((bs * cur_seq_len, vs))
+
+        # Forward pass
+        y_mu_inf, y_mu, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
+        logits = y_mu_inf.reshape(bs, cur_seq_len, vs)
+
+        if current_tokens.shape[1] > sl:
+            last_pos = sl - 1
+        else:
+            last_pos = current_tokens.shape[1] - 1
+
+        # Sampling fix (F8): y_mu_inf holds softmax probabilities, so take log before temperature
+        next_logits = jnp.log(logits[0, last_pos, :] + 1e-9) / temperature
+
+        # Sample or take argmax
+        if current_key is not None:
+            if top_k is not None and top_k > 0:
+                top_k_min = min(top_k, vs)
+                top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k_min)
+                probs = jax.nn.softmax(top_vals)
+                current_key, subkey = jax.random.split(current_key)
+                choice = jax.random.choice(subkey, a=top_k_min, p=probs)
+                next_token = top_idx[choice]
             else:
-                input_seq = current_tokens
+                probs = jax.nn.softmax(next_logits)
+                current_key, subkey = jax.random.split(current_key)
+                next_token = jax.random.choice(subkey, a=vs, p=probs)
+        else:
+            next_token = jnp.argmax(next_logits)
 
-            # Pad to exactly seq_len if needed
-            if input_seq.shape[1] < config.seq_len:
-                pad_len = config.seq_len - input_seq.shape[1]
-                input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
-            
-            bs = getattr(model, 'batch_size', config.batch_size)
-            vs = getattr(model, 'vocab_size', config.vocab_size)
-            sl = getattr(model, 'seq_len', config.seq_len)
-
-            cur_seq_len = sl
-            dummy_target = jnp.zeros((bs * cur_seq_len, vs))
-
-            # Forward pass
-            y_mu_inf, y_mu, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
-            logits = y_mu_inf.reshape(bs, cur_seq_len, vs)
-
-            if current_tokens.shape[1] > sl:
-                last_pos = sl - 1
-            else:
-                last_pos = current_tokens.shape[1] - 1
-
-            next_logits = logits[0, last_pos, :] / temperature
-
-            # Sample or take argmax
-            if current_key is not None:
-                if top_k is not None and top_k > 0:
-                    top_k_min = min(top_k, vs)
-                    top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k_min)
-                    probs = jax.nn.softmax(top_vals)
-                    current_key, subkey = jax.random.split(current_key)
-                    choice = jax.random.choice(subkey, a=top_k_min, p=probs)
-                    next_token = top_idx[choice]
-                else:
-                    probs = jax.nn.softmax(next_logits)
-                    current_key, subkey = jax.random.split(current_key)
-                    next_token = jax.random.choice(subkey, a=vs, p=probs)
-            else:
-                next_token = jnp.argmax(next_logits)
-
-            # Append new token
-            current_tokens = jnp.concatenate([current_tokens, next_token[None, None]], axis=1)
-
-    finally:
-        if use_kv_cache and hasattr(model, 'disable_kv_cache'):
-            model.disable_kv_cache()
+        # Append new token
+        current_tokens = jnp.concatenate([current_tokens, next_token[None, None]], axis=1)
 
     # Decode generated IDs back to text
     generated_ids = current_tokens[0].tolist()
@@ -142,8 +158,9 @@ def generate_text(
 
 # Initialize the model and tokenizer only when run as a script
 if __name__ == "__main__":
-    # Initialize the model
+    # Initialize the model with dropout_rate=0.0 (eval mode for generation)
     dkey = jax.random.PRNGKey(0)
+    load_dir = "exp" if (Path("exp").exists() and any(Path("exp").iterdir())) else None
     model = NGCTransformer(
         dkey, 
         batch_size=config.batch_size,
@@ -157,15 +174,15 @@ if __name__ == "__main__":
         tau_m=config.tau_m, 
         act_fx=config.act_fx, 
         eta=config.eta, 
-        dropout_rate=config.dropout_rate, 
+        dropout_rate=0.0, 
         exp_dir="exp",
-        loadDir="exp",
+        loadDir=load_dir,
         pos_learnable=config.pos_learnable, 
         optim_type=config.optim_type, 
         wub=config.wub, 
         wlb=config.wlb, 
         model_name="ngc_transformer",
-        generate= True
+        generate=True
     )
 
     tokenizer = get_tokenizer(config)
@@ -192,21 +209,47 @@ if __name__ == "__main__":
     seed_key = jax.random.PRNGKey(config.SEED)
     use_kv_cache = getattr(config, "use_kv_cache", True)
 
-    cache_label = "WITH KV Cache" if use_kv_cache else "WITHOUT KV Cache"
-    print(f"\n--- Generating {cache_label} ---")
+    path = "fast_decode (KV cache)" if use_kv_cache else "legacy full-context loop"
+    print(f"\n--- Generating with {path} ---")
 
-    t0 = time.time()
-    generated_text = generate_text(
+    max_new_tokens = 200
+    temperature = 0.8
+    top_k = 50
+
+    # Warm-up run (excluded from timing)
+    print("Warming up JIT...")
+    _ = generate_text(
         model, tokenizer,
-        max_new_tokens=200,
-        temperature=0.8,
-        top_k=50,
+        max_new_tokens=10,
+        temperature=temperature,
+        top_k=top_k,
         key=seed_key,
         use_kv_cache=use_kv_cache
     )
-    elapsed = time.time() - t0
 
-    print(f"\nGeneration time : {elapsed:.3f} seconds")
-    print(f"KV Cache        : {'Enabled' if use_kv_cache else 'Disabled'}")
+    num_runs = 3
+    times = []
+    tokens_per_sec = []
+    last_text = ""
+    for r in range(num_runs):
+        t0 = time.perf_counter()
+        last_text = generate_text(
+            model, tokenizer,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            key=seed_key,
+            use_kv_cache=use_kv_cache
+        )
+        elapsed = time.perf_counter() - t0
+        tps = max_new_tokens / elapsed
+        times.append(elapsed)
+        tokens_per_sec.append(tps)
+        print(f"Run {r + 1}: {elapsed:.3f} s ({tps:.2f} tokens/sec)")
+
+    median_tps = float(np.median(tokens_per_sec))
+    print(f"\nPath            : {path}")
+    print(f"Tokens/sec      : {median_tps:.2f} tokens/sec (median of {num_runs} runs)")
+    print(f"Latency spread  : min={min(times):.3f}s, max={max(times):.3f}s")
     print("\nGENERATED TEXT:")
-    print(generated_text)
+    print(last_text)
