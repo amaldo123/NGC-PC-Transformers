@@ -105,20 +105,22 @@ def generate_text_legacy(
     else:
         input_ids = [start_token_id]
 
-    current_tokens = jnp.array([input_ids], dtype=jnp.int32)
+    tokens_list = list(input_ids)
     current_key = key
 
     for _ in range(max_new_tokens):
         # Truncate context to fit model's seq_len
-        if current_tokens.shape[1] > config.seq_len:
-            input_seq = current_tokens[:, -config.seq_len:]
+        if len(tokens_list) > config.seq_len:
+            sub = tokens_list[-config.seq_len:]
         else:
-            input_seq = current_tokens
+            sub = tokens_list
 
-        # Pad to exactly seq_len if needed
-        if input_seq.shape[1] < config.seq_len:
-            pad_len = config.seq_len - input_seq.shape[1]
-            input_seq = jnp.pad(input_seq, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
+        cur_arr = jnp.array([sub], dtype=jnp.int32)
+        if cur_arr.shape[1] < config.seq_len:
+            pad_len = config.seq_len - cur_arr.shape[1]
+            input_seq = jnp.pad(cur_arr, ((0, 0), (0, pad_len)), constant_values=pad_token_id)
+        else:
+            input_seq = cur_arr
 
         # Forward pass (no target clamping during inference)
         dummy_target = jnp.zeros((config.batch_size * config.seq_len, config.vocab_size))
@@ -127,10 +129,10 @@ def generate_text_legacy(
         probs_3d = y_mu_inf.reshape(config.batch_size, config.seq_len, config.vocab_size)
 
         # Get probabilities for the last *real* token (excluding padding)
-        if current_tokens.shape[1] > config.seq_len:
+        if len(tokens_list) > config.seq_len:
             last_pos = config.seq_len - 1
         else:
-            last_pos = current_tokens.shape[1] - 1
+            last_pos = len(tokens_list) - 1
         last_probs = probs_3d[0, last_pos, :]
 
         # Note: y_mu_inf is already softmax probabilities from q_target_Ratecell.
@@ -144,22 +146,20 @@ def generate_text_legacy(
                     p = jax.nn.softmax(top_vals)
                     current_key, subkey = jax.random.split(current_key)
                     choice = jax.random.choice(subkey, a=k_val, p=p)
-                    next_token = top_idx[choice]
+                    next_token = int(top_idx[choice])
                 else:
                     p = jax.nn.softmax(next_logits)
                     current_key, subkey = jax.random.split(current_key)
-                    next_token = jax.random.choice(subkey, a=config.vocab_size, p=p)
+                    next_token = int(jax.random.choice(subkey, a=config.vocab_size, p=p))
             else:
-                next_token = jnp.argmax(next_logits)
+                next_token = int(jnp.argmax(next_logits))
         else:
-            next_token = jnp.argmax(last_probs)
+            next_token = int(jnp.argmax(last_probs))
 
-        # Append new token
-        current_tokens = jnp.concatenate([current_tokens, next_token[None, None]], axis=1)
+        tokens_list.append(next_token)
 
     # Decode generated IDs back to text
-    generated_ids = current_tokens[0].tolist()
-    return tokenizer.decode(generated_ids)
+    return tokenizer.decode(tokens_list)
 
 
 def benchmark_generation(gen_fn, num_runs=3):
