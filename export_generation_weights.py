@@ -30,6 +30,26 @@ def compute_config_hash(cfg_dict: dict) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
 
 
+def get_current_config_hash() -> str:
+    """Compute a deterministic hash of all non-callable config parameters."""
+    keys = sorted([k for k in dir(config) if not k.startswith("__") and not callable(getattr(config, k))])
+    d = {k: getattr(config, k) for k in keys}
+    return compute_config_hash(d)
+
+
+def get_checkpoint_files_meta(checkpoint_dir: str) -> dict:
+    """Collect file sizes and modification times for files in the checkpoint directory."""
+    cp = Path(checkpoint_dir)
+    files = {}
+    if cp.exists() and cp.is_dir():
+        for p in sorted(cp.glob("**/*")):
+            if p.is_file():
+                rel = str(p.relative_to(cp)).replace("\\", "/")
+                st = p.stat()
+                files[rel] = {"size": st.st_size, "mtime": st.st_mtime}
+    return files
+
+
 def extract_weights_and_meta_from_model(model, checkpoint_dir: str = "exp"):
     """
     Extracts the projection-equivalent parameter tensors and architecture metadata
@@ -77,17 +97,19 @@ def extract_weights_and_meta_from_model(model, checkpoint_dir: str = "exp"):
     else:
         rope_theta = float(getattr(config, "rope_theta", 10000.0))
 
-    # Validate position encoding combinations explicitly (FIX 2)
+    # Validate position encoding combinations explicitly
     if pos_encoding not in ("positional", "rope"):
         raise ValueError(
             f"Unknown position_encoding '{pos_encoding}' on model instance. "
             "Must be one of {'positional', 'rope'}."
         )
 
+    # Relaxed rope+pos_learnable check: only error if pos_weights would actually be used
     if pos_encoding == "rope" and pos_learnable:
-        raise ValueError(
-            "Invalid configuration: position_encoding='rope' cannot be used with pos_learnable=True."
-        )
+        if getattr(model, "use_positional", False):
+            raise ValueError(
+                "Invalid configuration: position_encoding='rope' cannot be used when positional embeddings (pos_weights) are actively enabled."
+            )
 
     # 3. Extract parameter tensors
     weights_dict = {}
@@ -145,11 +167,14 @@ def extract_weights_and_meta_from_model(model, checkpoint_dir: str = "exp"):
         "act_fx_out": "softmax",
         "tau_m_projection": 0.0,
     }
-    cfg_hash = compute_config_hash(cfg_summary)
+    cfg_hash = get_current_config_hash()
+    cp_files = get_checkpoint_files_meta(checkpoint_dir) if str(checkpoint_dir) != "in_memory" else {}
 
     metadata = {
         **cfg_summary,
         "config_hash": cfg_hash,
+        "checkpoint_dir": str(checkpoint_dir),
+        "checkpoint_files": cp_files,
         "cells": {
             "q_embed_Ratecell": {"tau_m": 0.0, "act_fx": "identity", "prior": ["gaussian", 0.0]},
             "q_qkv_Ratecell": {"tau_m": 0.0, "act_fx": "identity", "prior": ["gaussian", 0.0]},
@@ -213,42 +238,36 @@ def export_weights(
     print("NGC TRANSFORMER: WEIGHT EXPORT FOR FAST STANDALONE DECODER")
     print("=" * 75)
 
+    if not use_synthetic:
+        cp_path = Path(checkpoint_dir)
+        has_checkpoint = False
+        if cp_path.exists() and cp_path.is_dir():
+            has_checkpoint = any(cp_path.glob("**/*.npz")) or any(cp_path.glob("**/circuit.json"))
+        if not has_checkpoint:
+            raise FileNotFoundError(
+                f"Checkpoint directory '{checkpoint_dir}' does not exist or contains no valid checkpoint files.\n"
+                f"To export weights from a trained model, provide a valid directory containing trained weights.\n"
+                f"To export a randomly initialized model for testing, explicitly pass use_synthetic=True (or --synthetic on CLI)."
+            )
+    else:
+        print("\n" + "!" * 75)
+        print("[WARNING] use_synthetic=True: EXPORTING UNTRAINED RANDOM WEIGHTS!")
+        print("These weights are synthetic and should only be used for testing, not real generation.")
+        print("!" * 75 + "\n")
+
     dkey = jax.random.PRNGKey(0)
     load_dir = None if use_synthetic else checkpoint_dir
 
     print(f"[1/4] Initializing NGCTransformer (loadDir='{load_dir}', synthetic={use_synthetic})...")
 
-    model_kwargs = {
-        "dkey": dkey,
-        "batch_size": config.batch_size,
-        "seq_len": config.seq_len,
-        "n_embed": config.n_embed,
-        "vocab_size": config.vocab_size,
-        "n_layers": config.n_layers,
-        "n_heads": config.n_heads,
-        "T": config.n_iter,
-        "dt": 1.0,
-        "tau_m": config.tau_m,
-        "act_fx": config.act_fx,
-        "eta": config.eta,
-        "dropout_rate": 0.0,
-        "exp_dir": checkpoint_dir,
-        "loadDir": load_dir,
-        "pos_learnable": config.pos_learnable,
-        "optim_type": config.optim_type,
-        "wub": config.wub,
-        "wlb": config.wlb,
-        "model_name": model_name,
-        "generate": True,
-    }
-
-    init_sig = inspect.signature(NGCTransformer.__init__)
-    if "position_encoding" in init_sig.parameters:
-        model_kwargs["position_encoding"] = getattr(config, "position_encoding", "positional")
-    if "rope_theta" in init_sig.parameters:
-        model_kwargs["rope_theta"] = float(getattr(config, "rope_theta", 10000.0))
-
-    model = NGCTransformer(**model_kwargs)
+    from model import build_model_from_config
+    model = build_model_from_config(
+        dkey=dkey,
+        exp_dir=checkpoint_dir,
+        loadDir=load_dir,
+        model_name=model_name,
+        generate=True,
+    )
 
     print("[2/4] Extracting projection-equivalent parameter tensors from model instance...")
     weights_dict, metadata = export_from_model(

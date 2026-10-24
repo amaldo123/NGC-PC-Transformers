@@ -45,11 +45,11 @@ python generation.py
 
 Generation historically called `model.process()`, which executed the full training-time predictive coding circuit: `reset.run()`, 52 parameter copies from the training model into the projection model, error cell updates, transposed feedback synapse updates, and $T=26$ iterative relaxation steps over a full padded `batch_size x seq_len` window for every single generated token.
 
-The standalone inference decoder in `inference/decoder.py` isolates the exact feedforward predictive coding projection path (`y_mu_inf = projection.q_target_Ratecell.zF`) in pure JAX with zero imports of `model.py` at runtime.
+The standalone inference decoder in `inference/decoder.py` isolates the exact feedforward predictive coding projection path (`y_mu_inf = projection.q_target_Ratecell.zF`) in pure JAX with zero runtime imports of `model.py`.
 
 ### Computational Complexity & KV Cache Semantics
-- **Within context window (`total_tokens <= seq_len`)**: Per-token computation is strictly **$O(1)$** via incremental step decoding with cached Key/Value states (`decode_step`).
-- **Past context window (`total_tokens > seq_len`)**: To strictly preserve 100% mathematical parity with the original model's sliding-window dynamics, the decoder performs a full prefill over the trailing `seq_len` window for each new token ($O(\text{seq\_len}^2)$ per token rather than $O(1)$).
+- **Within context window (`total_tokens <= seq_len`)**: Per-token step decoding executes $O(1)$ matrix multiplications with cached projection states, with $O(\text{seq\_len})$ attention and KV cache slice updates per step (`decode_step`).
+- **Past context window (`total_tokens > seq_len`)**: To strictly preserve 100% mathematical parity with the original model's sliding-window dynamics, the decoder performs a full prefill over the trailing `seq_len` window for each new token ($O(\text{seq\_len}^2)$ computation per token).
 
 ### 1. One-Time Weight Export
 Extract parameters and architecture metadata from a checkpoint into standalone files:

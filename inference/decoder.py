@@ -6,6 +6,7 @@ with O(1) KV-cache decode steps and exact sliding-window semantics.
 """
 
 import json
+import warnings
 from pathlib import Path
 from functools import partial
 import numpy as np
@@ -87,9 +88,14 @@ def apply_rope(q, k, cos, sin):
 # 3. Weight and Metadata Loading
 # ==============================================================================
 
-def load_weights(npz_path: str = "generation_weights.npz", meta_path: str = "generation_meta.json"):
+def load_weights(
+    npz_path: str = "generation_weights.npz",
+    meta_path: str = "generation_meta.json",
+    verify_staleness: bool = True
+):
     """
     Loads exported projection weights and architecture metadata.
+    Validates activation functions against decoder implementation and verifies staleness.
     Returns:
       params: dictionary of JAX arrays (PyTree)
       meta: dictionary of hyperparameters and cell settings
@@ -107,6 +113,69 @@ def load_weights(npz_path: str = "generation_weights.npz", meta_path: str = "gen
 
     with open(meta_p, "r", encoding="utf-8") as f:
         meta = json.load(f)
+
+    # 1. Validate meta activation functions and cell configurations (Item 6)
+    act_fx = meta.get("act_fx", "identity")
+    if act_fx != "identity":
+        raise ValueError(
+            f"Unsupported act_fx '{act_fx}' in metadata. "
+            f"The standalone decoder only implements 'identity' activation for state nodes."
+        )
+
+    act_fx_mlp2 = meta.get("act_fx_mlp2", "gelu")
+    if act_fx_mlp2 != "gelu":
+        raise ValueError(
+            f"Unsupported act_fx_mlp2 '{act_fx_mlp2}' in metadata. "
+            f"The standalone decoder only implements 'gelu' activation for MLP intermediate nodes."
+        )
+
+    act_fx_out = meta.get("act_fx_out", "softmax")
+    if act_fx_out != "softmax":
+        raise ValueError(
+            f"Unsupported act_fx_out '{act_fx_out}' in metadata. "
+            f"The standalone decoder only implements 'softmax' output head projection."
+        )
+
+    tau_m_projection = float(meta.get("tau_m_projection", 0.0))
+    if tau_m_projection != 0.0:
+        raise ValueError(
+            f"Unsupported tau_m_projection {tau_m_projection}. "
+            f"The standalone decoder requires tau_m=0.0 (instantaneous projection)."
+        )
+
+    # 2. Staleness validation (Item 2)
+    if verify_staleness:
+        meta_cfg_hash = meta.get("config_hash")
+        if meta_cfg_hash:
+            try:
+                from export_generation_weights import get_current_config_hash
+                curr_hash = get_current_config_hash()
+                if meta_cfg_hash != curr_hash:
+                    warnings.warn(
+                        f"Staleness Warning: Configuration hash in {meta_path} ('{meta_cfg_hash}') "
+                        f"does not match current config.py ('{curr_hash}'). "
+                        "Weights may be out-of-date with respect to config.py. Re-exporting is recommended."
+                    )
+            except Exception:
+                pass
+
+        cp_files = meta.get("checkpoint_files", {})
+        cp_dir = meta.get("checkpoint_dir", "exp")
+        if cp_files and Path(cp_dir).exists():
+            for rel_f, expected in cp_files.items():
+                actual_file = Path(cp_dir) / rel_f
+                if not actual_file.exists():
+                    warnings.warn(
+                        f"Staleness Warning: Checkpoint file '{actual_file}' is missing since export."
+                    )
+                    break
+                st = actual_file.stat()
+                if st.st_size != expected["size"] or abs(st.st_mtime - expected["mtime"]) > 1e-4:
+                    warnings.warn(
+                        f"Staleness Warning: Checkpoint file '{actual_file}' has been modified "
+                        f"(size or mtime changed) since generation weights were exported."
+                    )
+                    break
 
     raw_weights = np.load(str(npz_p))
 
@@ -413,7 +482,7 @@ def prefill(params: dict, tokens: jnp.ndarray, n: int, meta: dict = None, return
 # 5. O(1) Incremental Decode Step with Fixed-Shape KV Cache
 # ==============================================================================
 
-@partial(jax.jit, static_argnames=["n_layers", "n_heads", "d_head", "seq_len", "use_rope"])
+@partial(jax.jit, static_argnames=["n_layers", "n_heads", "d_head", "seq_len", "use_rope"], donate_argnums=(2, 3))
 def _decode_step_jit(
     token_id: int,
     pos: int,
@@ -452,10 +521,7 @@ def _decode_step_jit(
     valid_mask = slot_indices <= pos
     attn_mask = valid_mask[None, None, None, :]  # (1, 1, 1, seq_len)
 
-    updated_k_layers = []
-    updated_v_layers = []
-
-    # 2. Layer-by-layer forward computation
+    # 2. Layer-by-layer forward computation with direct in-place cache updates
     for i in range(n_layers):
         lp = layer_params[i]
 
@@ -480,16 +546,13 @@ def _decode_step_jit(
             sin_p = sin_slice[None, None, :, :]  # (1, 1, 1, d_head)
             q, k = apply_rope(q, k, cos_p, sin_p)
 
-        # Update cache at slot `pos` using lax.dynamic_update_slice
-        # k_cache[i]: (1, n_heads, seq_len, d_head)
-        k_layer = k_cache[i]
-        v_layer = v_cache[i]
+        # Update cache directly at slot `pos` along layer index `i` (Item 7)
+        # Avoids allocating Python lists and eliminates re-stacking the whole cache each step
+        k_cache = jax.lax.dynamic_update_slice(k_cache, k[None, ...], (i, 0, 0, pos, 0))
+        v_cache = jax.lax.dynamic_update_slice(v_cache, v[None, ...], (i, 0, 0, pos, 0))
 
-        k_updated = jax.lax.dynamic_update_slice(k_layer, k, (0, 0, pos, 0))
-        v_updated = jax.lax.dynamic_update_slice(v_layer, v, (0, 0, pos, 0))
-
-        updated_k_layers.append(k_updated)
-        updated_v_layers.append(v_updated)
+        k_updated = k_cache[i]
+        v_updated = v_cache[i]
 
         # Multi-Head Attention over all cached keys/values (1..seq_len)
         scores = jnp.einsum("BHTE,BHSE->BHTS", q, k_updated) / jnp.sqrt(d_head)
@@ -515,10 +578,7 @@ def _decode_step_jit(
     # 3. Output Head: q_out_Ratecell -> Q_out
     logits = h[0] @ W_out + b_out  # (vocab_size,)
 
-    k_cache_out = jnp.stack(updated_k_layers, axis=0)
-    v_cache_out = jnp.stack(updated_v_layers, axis=0)
-
-    return logits, k_cache_out, v_cache_out
+    return logits, k_cache, v_cache
 
 
 def decode_step(params: dict, cache: tuple, token: int, pos: int, meta: dict = None):

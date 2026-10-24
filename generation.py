@@ -211,6 +211,9 @@ def main():
     parser.add_argument("--prompt", type=str, default="", help="Prompt text")
     parser.add_argument("--weights", type=str, default="generation_weights.npz", help="Weights file for standalone decoder")
     parser.add_argument("--meta", type=str, default="generation_meta.json", help="Meta JSON file for standalone decoder")
+    parser.add_argument("--exp-dir", type=str, default="exp", help="Checkpoint directory path")
+    parser.add_argument("--model-name", type=str, default="ngc_transformer", help="Model name")
+    parser.add_argument("--synthetic", action="store_true", help="Explicitly allow exporting synthetic random weights if weights/meta are missing (test only)")
     parser.add_argument("--runs", type=int, default=3, help="Number of benchmark runs")
     parser.add_argument("--seed", type=int, default=0, help="PRNG key seed")
     parser.add_argument("--device", type=str, default=None, help="Device to use ('cpu', 'gpu', or auto-detect)")
@@ -225,30 +228,13 @@ def main():
     if args.legacy:
         print("\n[Mode] Running LEGACY generation loop (NGCTransformer.process)...")
         # Lazy import of model.py only when --legacy is requested
-        from model import NGCTransformer
+        from model import build_model_from_config
 
-        dkey = jax.random.PRNGKey(args.seed)
-        model = NGCTransformer(
-            dkey,
-            batch_size=config.batch_size,
-            seq_len=config.seq_len,
-            n_embed=config.n_embed,
-            vocab_size=config.vocab_size,
-            n_layers=config.n_layers,
-            n_heads=config.n_heads,
-            T=config.n_iter,
-            dt=1.0,
-            tau_m=config.tau_m,
-            act_fx=config.act_fx,
-            eta=config.eta,
-            dropout_rate=0.0,
-            exp_dir="exp",
-            loadDir="exp",
-            pos_learnable=config.pos_learnable,
-            optim_type=config.optim_type,
-            wub=config.wub,
-            wlb=config.wlb,
-            model_name="ngc_transformer",
+        model = build_model_from_config(
+            seed=args.seed,
+            exp_dir=args.exp_dir,
+            loadDir=args.exp_dir,
+            model_name=args.model_name,
             generate=True
         )
 
@@ -282,16 +268,42 @@ def main():
         weights_path = Path(args.weights)
         meta_path = Path(args.meta)
         if not weights_path.exists() or not meta_path.exists():
-            print("Standalone weights not found. Running export_generation_weights.py...")
             from export_generation_weights import export_weights
-            export_weights(
-                checkpoint_dir="exp",
-                model_name="ngc_transformer",
-                output_npz=str(weights_path),
-                output_meta=str(meta_path),
-                use_synthetic=True,
-                device=args.device
-            )
+            if args.synthetic:
+                print("\n" + "!" * 75)
+                print("[WARNING] --synthetic flag was explicitly passed: EXPORTING UNTRAINED RANDOM WEIGHTS!")
+                print("Generated text will be completely untrained gibberish.")
+                print("!" * 75 + "\n")
+                export_weights(
+                    checkpoint_dir=args.exp_dir,
+                    model_name=args.model_name,
+                    output_npz=str(weights_path),
+                    output_meta=str(meta_path),
+                    use_synthetic=True,
+                    device=args.device
+                )
+            else:
+                cp_dir = Path(args.exp_dir)
+                has_checkpoint = False
+                if cp_dir.exists() and cp_dir.is_dir():
+                    has_checkpoint = any(cp_dir.glob("**/*.npz")) or any(cp_dir.glob("**/circuit.json"))
+                if not has_checkpoint:
+                    raise FileNotFoundError(
+                        f"Cannot auto-export generation weights: checkpoint directory '{args.exp_dir}' "
+                        f"does not exist or contains no saved checkpoint files.\n"
+                        f"To generate text with a trained model, please train a checkpoint first (via train.py) "
+                        f"or specify an existing checkpoint directory with --exp-dir.\n"
+                        f"(If you only want to test the pipeline with random weights, explicitly pass --synthetic.)"
+                    )
+                print(f"Standalone weights not found. Exporting from checkpoint at '{args.exp_dir}'...")
+                export_weights(
+                    checkpoint_dir=args.exp_dir,
+                    model_name=args.model_name,
+                    output_npz=str(weights_path),
+                    output_meta=str(meta_path),
+                    use_synthetic=False,
+                    device=args.device
+                )
 
         params, meta = load_weights(str(weights_path), str(meta_path))
 

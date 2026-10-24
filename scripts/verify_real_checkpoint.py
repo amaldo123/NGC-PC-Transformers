@@ -142,20 +142,37 @@ def verify_greedy_step_by_step(model, params, meta, tokenizer, prompt, max_token
         fast_probs = np.array(softmax(current_fast_logits))
         fast_next_token = int(np.argmax(fast_probs))
 
-        # ── 3. Step comparison & assertions ──
-        step_prob_diff = float(np.max(np.abs(legacy_probs - fast_probs)))
-        if step_prob_diff > max_prob_diff_overall:
-            max_prob_diff_overall = step_prob_diff
+        fast_log_probs = np.array(jax.nn.log_softmax(current_fast_logits))
+        if hasattr(model, "projection") and hasattr(model.projection, "q_out_Ratecell"):
+            gt_h = model.projection.q_out_Ratecell.zF.get().reshape(config.batch_size, config.seq_len, -1)[0, last_pos]
+            gt_W = model.projection.Q_out.weights.get()
+            gt_b = model.projection.Q_out.biases.get().squeeze()
+            legacy_logits = gt_h @ gt_W + gt_b
+            legacy_log_probs = np.array(jax.nn.log_softmax(legacy_logits))
+        else:
+            legacy_log_probs = np.log(np.clip(legacy_probs, 1e-12, 1.0))
+
+        # ── 3. Step comparison & assertions (Item 5) ──
+        step_log_prob_diff = float(np.max(np.abs(legacy_log_probs - fast_log_probs)))
+        if step_log_prob_diff > max_prob_diff_overall:
+            max_prob_diff_overall = step_log_prob_diff
+
+        # Top-k probability comparison
+        k_eval = min(50, config.vocab_size)
+        topk_idx = np.argsort(-legacy_probs)[:k_eval]
+        step_topk_prob_diff = float(np.max(np.abs(legacy_probs[topk_idx] - fast_probs[topk_idx])))
 
         tokens_match = (legacy_next_token == fast_next_token)
-        probs_match = (step_prob_diff <= prob_tol)
+        log_probs_match = (step_log_prob_diff < 1e-3)
+        topk_probs_match = (step_topk_prob_diff < 1e-4)
 
-        if not tokens_match or not probs_match:
+        if not tokens_match or not log_probs_match or not topk_probs_match:
             print(f"\n[DIVERGENCE DETECTED AT STEP {step + 1}]")
             print(f"  Current sequence length: {len(legacy_tokens)}")
             print(f"  Legacy next token: {legacy_next_token} ({tokenizer.decode([legacy_next_token])!r})")
             print(f"  Fast   next token: {fast_next_token} ({tokenizer.decode([fast_next_token])!r})")
-            print(f"  Max probability diff: {step_prob_diff:.6e} (tolerance: {prob_tol:.6e})")
+            print(f"  Max log-prob diff over full vocab: {step_log_prob_diff:.6e} (tolerance: 1e-3)")
+            print(f"  Max top-{k_eval} prob diff: {step_topk_prob_diff:.6e} (tolerance: 1e-4)")
 
             # Print top 5 probabilities for both
             legacy_top5 = np.argsort(-legacy_probs)[:5]
@@ -166,18 +183,19 @@ def verify_greedy_step_by_step(model, params, meta, tokenizer, prompt, max_token
             divergence_found = True
             raise AssertionError(
                 f"Equivalence failed at step {step + 1}: token match={tokens_match}, "
-                f"prob diff={step_prob_diff:.2e} > tol={prob_tol:.2e}"
+                f"log-prob diff={step_log_prob_diff:.2e} (< 1e-3), "
+                f"top-k prob diff={step_topk_prob_diff:.2e} (< 1e-4)"
             )
 
         legacy_tokens.append(legacy_next_token)
         fast_tokens.append(fast_next_token)
 
         if (step + 1) % 20 == 0 or (step + 1) == max_tokens:
-            print(f"  Step {step + 1:3d}/{max_tokens:3d}: MATCH (max prob diff so far: {max_prob_diff_overall:.2e})")
+            print(f"  Step {step + 1:3d}/{max_tokens:3d}: MATCH (max log-prob diff so far: {max_prob_diff_overall:.2e})")
 
     print(f"\n[PASS] Greedy equivalence verified for all {max_tokens} tokens!")
     print(f"  Total tokens generated: {max_tokens}")
-    print(f"  Overall maximum probability difference: {max_prob_diff_overall:.2e}")
+    print(f"  Overall maximum log-probability difference: {max_prob_diff_overall:.2e}")
     print(f"  Final generated text sample:\n{tokenizer.decode(fast_tokens)!r}")
 
 
@@ -299,27 +317,11 @@ def main():
 
     # Instantiate legacy model and load checkpoint weights from exp/
     print(f"Instantiating legacy NGCTransformer and loading checkpoint from {args.exp_dir}...")
-    dkey = jax.random.PRNGKey(args.seed)
-    model = NGCTransformer(
-        dkey,
-        batch_size=config.batch_size,
-        seq_len=config.seq_len,
-        n_embed=config.n_embed,
-        vocab_size=config.vocab_size,
-        n_layers=config.n_layers,
-        n_heads=config.n_heads,
-        T=config.n_iter,
-        dt=1.0,
-        tau_m=config.tau_m,
-        act_fx=config.act_fx,
-        eta=config.eta,
-        dropout_rate=0.0,
+    from model import build_model_from_config
+    model = build_model_from_config(
+        seed=args.seed,
         exp_dir=args.exp_dir,
         loadDir=args.exp_dir,
-        pos_learnable=getattr(config, "pos_learnable", True),
-        optim_type=config.optim_type,
-        wub=config.wub,
-        wlb=config.wlb,
         model_name=args.model_name,
         generate=True,
     )
