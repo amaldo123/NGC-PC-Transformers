@@ -9,7 +9,6 @@ import numpy as np
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
 os.environ.setdefault('XLA_FLAGS', '--xla_gpu_autotune_level=0 --xla_gpu_strict_conv_algorithm_picker=false --xla_cpu_use_thunk_runtime=false')
 os.environ.setdefault('TF_GPU_ALLOCATOR', 'cuda_malloc_async')
-os.environ.setdefault('JAX_PLATFORM_NAME', 'cpu')
 os.environ.setdefault('JAX_ENABLE_X64', 'False')
 
 # Redirect stderr to suppress XLA warnings
@@ -21,7 +20,8 @@ warnings.filterwarnings('ignore')
 
 # Now import JAX and other libraries
 import jax
-jax.config.update('jax_platform_name', os.environ.get('JAX_PLATFORM_NAME', 'cpu'))
+if 'JAX_PLATFORM_NAME' in os.environ:
+    jax.config.update('jax_platform_name', os.environ['JAX_PLATFORM_NAME'])
 jax.config.update('jax_log_compiles', False)
 
 # Restore stderr after JAX initialization
@@ -162,11 +162,26 @@ def generate_text_legacy(
     return tokenizer.decode(tokens_list)
 
 
+# Backward-compatibility alias
+generate_text = generate_text_legacy
+
+
 def benchmark_generation(gen_fn, num_runs=3):
-    """Run generation multiple times and report median, min, max tokens/sec."""
+    """
+    Run generation with an initial warmup pass (capturing JIT compilation overhead),
+    followed by `num_runs` timed passes for pure inference throughput.
+    """
+    print("  Warmup run (compiling JIT graphs)...", end="", flush=True)
+    t_warm_0 = time.perf_counter()
+    warm_text, warm_tokens = gen_fn()
+    t_warm_1 = time.perf_counter()
+    jit_time = t_warm_1 - t_warm_0
+    print(f" done in {jit_time:.3f}s")
+
     durations = []
     tokens_per_sec = []
-    text_out = None
+    text_out = warm_text
+
     for r in range(num_runs):
         t0 = time.perf_counter()
         text_out, n_tok = gen_fn()
@@ -180,7 +195,8 @@ def benchmark_generation(gen_fn, num_runs=3):
     median_tps = float(np.median(tokens_per_sec))
     min_tps = float(np.min(tokens_per_sec))
     max_tps = float(np.max(tokens_per_sec))
-    print(f"\nBenchmark Summary ({num_runs} runs):")
+    print(f"\nBenchmark Summary ({num_runs} runs, excluding warmup):")
+    print(f"  JIT compile / Warmup time: {jit_time:.3f}s")
     print(f"  Tokens/sec - Median: {median_tps:.2f} | Min: {min_tps:.2f} | Max: {max_tps:.2f}")
     return text_out, median_tps, min_tps, max_tps
 
@@ -197,7 +213,11 @@ def main():
     parser.add_argument("--meta", type=str, default="generation_meta.json", help="Meta JSON file for standalone decoder")
     parser.add_argument("--runs", type=int, default=3, help="Number of benchmark runs")
     parser.add_argument("--seed", type=int, default=0, help="PRNG key seed")
+    parser.add_argument("--device", type=str, default=None, help="Device to use ('cpu', 'gpu', or auto-detect)")
     args = parser.parse_args()
+
+    if args.device is not None:
+        jax.config.update("jax_platform_name", args.device)
 
     tokenizer = setup_tokenizer()
     rng = jax.random.PRNGKey(args.seed)
@@ -264,7 +284,14 @@ def main():
         if not weights_path.exists() or not meta_path.exists():
             print("Standalone weights not found. Running export_generation_weights.py...")
             from export_generation_weights import export_weights
-            export_weights(exp_dir="exp", model_name="ngc_transformer", out_weights=str(weights_path), out_meta=str(meta_path))
+            export_weights(
+                checkpoint_dir="exp",
+                model_name="ngc_transformer",
+                output_npz=str(weights_path),
+                output_meta=str(meta_path),
+                use_synthetic=True,
+                device=args.device
+            )
 
         params, meta = load_weights(str(weights_path), str(meta_path))
 

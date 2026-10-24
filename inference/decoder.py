@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 
 # ==============================================================================
-# 1. Activation Functions & RateCell Semantics (ngclearn-verified)
+# 1. Activation Functions (ngclearn-verified)
 # ==============================================================================
 
 def identity(x):
@@ -36,36 +36,6 @@ def softmax(x, axis=-1):
     exp_x = jnp.exp(x - max_x)
     return exp_x / jnp.sum(exp_x, axis=axis, keepdims=True)
 
-
-def get_activation_fn(name: str):
-    """Retrieve activation function by name from metadata."""
-    name = (name or "identity").lower()
-    if name == "gelu":
-        return gelu
-    elif name == "softmax":
-        return softmax
-    elif name == "relu":
-        return jax.nn.relu
-    elif name == "tanh":
-        return jnp.tanh
-    elif name == "identity":
-        return identity
-    else:
-        return identity
-
-
-def ratecell_step(j, tau_m: float = 0.0, act_fn=identity):
-    """
-    Computes a single step of RateCell dynamics from rest state (z=0) at dt=1.0.
-    Matches ngclearn RateCell.advance_state(dt=1.0) exactly:
-      - Stateless (tau_m <= 0): z = j, zF = act_fn(z)
-      - Stateful (tau_m > 0):   z = j / tau_m, zF = act_fn(z)
-    """
-    if tau_m <= 0.0:
-        z = j
-    else:
-        z = j / tau_m
-    return act_fn(z)
 
 
 # ==============================================================================
@@ -292,16 +262,120 @@ def _prefill_jit(
     return logits, k_cache_arr, v_cache_arr
 
 
-def prefill(params: dict, tokens: jnp.ndarray, n: int, meta: dict = None):
+def prefill_with_intermediates(params: dict, tokens: jnp.ndarray, n: int, meta: dict):
+    """
+    Batched causal forward pass over a padded window of seq_len tokens.
+    Exposes intermediate node activations across all layers for verification against
+    the model's cell zF values (q_embed, q_qkv, q_attn, q_mlp, q_mlp2, q_out, q_target).
+    Returns:
+      logits: (vocab_size,)
+      cache: (k_cache, v_cache)
+      intermediates: dict of node name -> jnp.ndarray of shape (seq_len, dim)
+    """
+    seq_len = meta["seq_len"]
+    n_layers = meta["n_layers"]
+    n_heads = meta["n_heads"]
+    d_head = meta["d_head"]
+    use_rope = (meta.get("position_encoding", "positional") == "rope")
+
+    tokens_padded = jnp.zeros((seq_len,), dtype=jnp.int32)
+    n_clamped = min(int(n), seq_len)
+    tokens_padded = tokens_padded.at[:n_clamped].set(tokens[:n_clamped])
+
+    word_weights = params["word_weights"]
+    pos_weights = params.get("pos_weights")
+    layer_params = params["layers"]
+    W_out = params["W_out"]
+    b_out = params["b_out"]
+    cos = params.get("cos")
+    sin = params.get("sin")
+
+    token_ids = tokens_padded.reshape(-1).astype(jnp.int32)
+    h_word = word_weights[token_ids]  # (seq_len, n_embed)
+
+    # In ngclearn projection, q_embed is the input token representations:
+    # for positional with pos_weights, embedding output is h_word + pos_weights
+    if not use_rope and pos_weights is not None:
+        h = h_word + pos_weights[:seq_len]
+    else:
+        h = h_word
+
+    q_embed = h
+
+    causal_mask = jnp.tril(jnp.ones((seq_len, seq_len), dtype=bool))[None, None, :, :]
+
+    k_cache_list = []
+    v_cache_list = []
+    intermediates = {
+        "q_embed": q_embed,
+    }
+
+    for i in range(n_layers):
+        lp = layer_params[i]
+        z_qkv = h
+        intermediates[f"block{i}_q_qkv"] = z_qkv
+
+        Q = z_qkv @ lp["W_q"] + lp["b_q"]
+        K = z_qkv @ lp["W_k"] + lp["b_k"]
+        V = z_qkv @ lp["W_v"] + lp["b_v"]
+
+        q = Q.reshape(seq_len, n_heads, d_head).transpose([1, 0, 2])[None, ...]
+        k = K.reshape(seq_len, n_heads, d_head).transpose([1, 0, 2])[None, ...]
+        v = V.reshape(seq_len, n_heads, d_head).transpose([1, 0, 2])[None, ...]
+
+        if use_rope:
+            cos_b = cos[None, None, :seq_len, :]
+            sin_b = sin[None, None, :seq_len, :]
+            q, k = apply_rope(q, k, cos_b, sin_b)
+
+        k_cache_list.append(k)
+        v_cache_list.append(v)
+
+        scores = jnp.einsum("BHTE,BHSE->BHTS", q, k) / jnp.sqrt(d_head)
+        scores = jnp.where(causal_mask, scores, -1e9)
+        attn_probs = jax.nn.softmax(scores, axis=-1)
+
+        attn_out = jnp.einsum("BHTS,BHSE->BHTE", attn_probs, v)[0].transpose([1, 0, 2]).reshape(seq_len, -1)
+        intermediates[f"block{i}_q_attn"] = attn_out
+
+        o_attn = attn_out @ lp["W_attn_out"] + lp["b_attn_out"]
+        intermediates[f"block{i}_q_mlp"] = o_attn
+
+        z_mlp = o_attn
+        m1 = z_mlp @ lp["W_mlp1"] + lp["b_mlp1"]
+        z_mlp2 = gelu(m1)
+        intermediates[f"block{i}_q_mlp2"] = z_mlp2
+
+        h = z_mlp2 @ lp["W_mlp2"] + lp["b_mlp2"]
+
+    intermediates["q_out"] = h
+
+    all_logits = h @ W_out + b_out  # (seq_len, vocab_size)
+    intermediates["q_target"] = softmax(all_logits, axis=-1)
+
+    last_idx = jnp.clip(n_clamped - 1, 0, seq_len - 1)
+    logits = all_logits[last_idx]
+
+    k_cache_arr = jnp.stack(k_cache_list, axis=0)
+    v_cache_arr = jnp.stack(v_cache_list, axis=0)
+
+    return logits, (k_cache_arr, v_cache_arr), intermediates
+
+
+def prefill(params: dict, tokens: jnp.ndarray, n: int, meta: dict = None, return_intermediates: bool = False):
     """
     Batched causal forward pass over a padded window of seq_len tokens.
     Only the last real row (n - 1) passes through the output head.
     Returns:
       logits: (vocab_size,) raw pre-softmax logits for the next token prediction
       cache: tuple of (k_cache, v_cache)
+      intermediates (optional): dict of intermediate node activations if return_intermediates=True
     """
     if meta is None:
         raise ValueError("meta dictionary must be provided to prefill.")
+
+    if return_intermediates:
+        return prefill_with_intermediates(params, tokens, n, meta)
 
     seq_len = meta["seq_len"]
     n_layers = meta["n_layers"]
@@ -398,10 +472,12 @@ def _decode_step_jit(
         k = k.reshape(1, n_heads, d_head)[:, :, None, :]
         v = v.reshape(1, n_heads, d_head)[:, :, None, :]
 
-        # RoPE rotation at position `pos`
+        # RoPE rotation at position `pos` using dynamic_slice_in_dim (FIX 3)
         if use_rope:
-            cos_p = cos[pos:pos + 1, :][None, None, :, :]  # (1, 1, 1, d_head)
-            sin_p = sin[pos:pos + 1, :][None, None, :, :]
+            cos_slice = jax.lax.dynamic_slice_in_dim(cos, pos, 1, axis=0)  # (1, d_head)
+            sin_slice = jax.lax.dynamic_slice_in_dim(sin, pos, 1, axis=0)  # (1, d_head)
+            cos_p = cos_slice[None, None, :, :]  # (1, 1, 1, d_head)
+            sin_p = sin_slice[None, None, :, :]  # (1, 1, 1, d_head)
             q, k = apply_rope(q, k, cos_p, sin_p)
 
         # Update cache at slot `pos` using lax.dynamic_update_slice
@@ -542,8 +618,8 @@ def generate(
     seq_len = meta["seq_len"]
     pos_encoding = meta.get("position_encoding", "positional")
 
-    if use_ring_buffer and pos_encoding != "rope":
-        raise ValueError("Ring-buffer mode is only valid when position_encoding='rope'.")
+    if use_ring_buffer:
+        raise NotImplementedError("Ring-buffer mode is not supported; exact sliding window requires prefill re-evaluations.")
 
     # 1. Resolve start token and pad token
     if pad_token_id is None:
