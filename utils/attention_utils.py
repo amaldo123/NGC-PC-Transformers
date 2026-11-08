@@ -7,6 +7,8 @@ from functools import partial
 import jax.numpy as jnp
 from utils.model_util import d_softmax_vjp
 
+DISABLE_ATTN_DROPOUT = False
+
 @partial(jit, static_argnums=[4, 5, 6, 7, 8])
 def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, batch_size, key):
     """
@@ -34,7 +36,7 @@ def _compute_attention(Q, K, V, mask, n_heads, d_head, dropout_rate, seq_len, ba
     score = jax.nn.softmax(s_c, axis=-1)
     score = score.astype(q.dtype)
     
-    if dropout_rate > 0.0:
+    if dropout_rate > 0.0 and not DISABLE_ATTN_DROPOUT:
         dkey = random.fold_in(key, 0)
         # dkey = random.PRNGKey(0)
         score = jax.random.bernoulli(dkey, 1 - dropout_rate, score.shape) * score / (1 - dropout_rate)

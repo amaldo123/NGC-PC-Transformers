@@ -747,6 +747,9 @@ def build_model_from_config(
     loadDir = overrides.pop("loadDir", loadDir)
     model_name = overrides.pop("model_name", model_name if model_name is not None else getattr(cfg, "model_name", "ngc_transformer"))
     generate = overrides.pop("generate", generate)
+    if generate:
+        import utils.attention_utils as _au
+        _au.DISABLE_ATTN_DROPOUT = True
 
     pos_learnable = overrides.pop("pos_learnable", getattr(cfg, "pos_learnable", False))
     position_encoding = overrides.pop("position_encoding", getattr(cfg, "position_encoding", "positional"))
