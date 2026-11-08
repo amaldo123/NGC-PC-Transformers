@@ -159,7 +159,7 @@ class EmbeddingSynapse(JaxComponent):
         self.position_encoding = position_encoding
         self.use_positional = (self.position_encoding == "positional")
         self.pos_learnable = pos_learnable
-                self.sign_value = sign_value
+        self.sign_value = sign_value
 
         # Regularization/bounding configuration
         self.w_bound = w_bound
@@ -185,10 +185,10 @@ class EmbeddingSynapse(JaxComponent):
             word_weights = jnp.zeros((self.vocab_size, self.embed_dim))
         if self.use_positional:
             if self.pos_learnable:
-            if weight_init is not None:
-                    pos_weights = weight_init((self.seq_len, self.embed_dim), pos_key)
-            else:
-                pos_weights = jnp.zeros((self.seq_len, self.embed_dim))
+                if weight_init is not None:
+                        pos_weights = weight_init((self.seq_len, self.embed_dim), pos_key)
+                else:
+                    pos_weights = jnp.zeros((self.seq_len, self.embed_dim))
             else:
                 pos_weights = _create_sinusoidal_embeddings(self.seq_len, self.embed_dim)
         else:
