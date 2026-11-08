@@ -186,7 +186,7 @@ class EmbeddingSynapse(JaxComponent):
         if self.use_positional:
             if self.pos_learnable:
                 if weight_init is not None:
-                        pos_weights = weight_init((self.seq_len, self.embed_dim), pos_key)
+                    pos_weights = weight_init((self.seq_len, self.embed_dim), pos_key)
                 else:
                     pos_weights = jnp.zeros((self.seq_len, self.embed_dim))
             else:
