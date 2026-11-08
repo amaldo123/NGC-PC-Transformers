@@ -111,12 +111,12 @@ def generate_text(
             if top_k is not None and top_k > 0:
                 top_k = min(top_k, config.vocab_size)
                 top_vals, top_idx = jax.lax.top_k(next_logits, k=top_k)
-                probs = jax.nn.softmax(top_vals)
+                probs = top_vals
                 current_key, subkey = jax.random.split(current_key)
                 choice = jax.random.choice(subkey, a=top_k, p=probs)
                 next_token = top_idx[choice]
             else:
-                probs = jax.nn.softmax(next_logits)
+                probs = next_logits
                 current_key, subkey = jax.random.split(current_key)
                 next_token = jax.random.choice(subkey, a=config.vocab_size, p=probs)
         else:
