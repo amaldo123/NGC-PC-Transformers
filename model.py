@@ -16,6 +16,7 @@ from layers.output import Output
 from utils.model_util import ReshapeComponent, Outgrad
 from projection.projection import Projection
 from ngcsimlib._src.global_state.manager import global_state_manager
+from ngcsimlib._src.global_state.manager import global_state_manager
 import numpy as np
 from utils.errorcell import GaussianErrorCell as ErrorCell
 from utils.ratecell import RateCell
@@ -99,7 +100,7 @@ class NGCTransformer:
     """
 
    
-    def __init__(self, dkey, batch_size, seq_len, n_embed, vocab_size, n_layers, n_heads, T, dt, tau_m, act_fx, eta, dropout_rate, exp_dir, model_name, loadDir=None, pos_learnable=False, optim_type="adam", wub=1.0, wlb=0.0, generate= False, **kwargs):
+    def __init__(self, dkey, batch_size, seq_len, n_embed, vocab_size, n_layers, n_heads, T, dt, tau_m, act_fx, eta, dropout_rate, exp_dir, model_name, loadDir=None,position_encoding="rope",pos_learnable=False,rope_theta=10000.0, optim_type="adam", wub=1.0, wlb=0.0, generate= False, **kwargs):
 
         self.exp_dir = exp_dir
         self.model_name = model_name
@@ -110,7 +111,10 @@ class NGCTransformer:
         self.seq_len= seq_len
         self.vocab_size= vocab_size
         self.n_embed= n_embed
-        
+        self.position_encoding = position_encoding
+        self.use_positional = position_encoding == "positional"
+        self.pos_learnable = pos_learnable
+        self.rope_theta = rope_theta
         if exp_dir is not None:
             makedir(exp_dir)
 
@@ -118,13 +122,13 @@ class NGCTransformer:
        
         with Context("Circuit") as self.circuit:
                 
-            self.embedding = EMBEDDING(dkey=subkeys[0], vocab_size=self.vocab_size, seq_len=self.seq_len, embed_dim=self.n_embed, batch_size=self.batch_size, pos_learnable=pos_learnable, eta=eta, optim_type=optim_type)
+            self.embedding = EMBEDDING(dkey=subkeys[0], vocab_size=self.vocab_size, seq_len=self.seq_len, embed_dim=self.n_embed, batch_size=self.batch_size, eta=eta, optim_type=optim_type, position_encoding=self.position_encoding, pos_learnable=self.pos_learnable)
                 
             self.blocks = []
             for i in range(n_layers):
                 key, subkey = random.split(subkeys[1 + i])
                 block=Block(dkey=subkey, block_id= i, n_embed=self.n_embed, seq_len=self.seq_len,
-                                batch_size=self.batch_size, vocab_size=self.vocab_size, n_heads=n_heads, dropout_rate=dropout_rate, eta=eta, optim_type=optim_type, wub=wub, wlb=wlb, tau_m=tau_m)
+                                batch_size=self.batch_size, vocab_size=self.vocab_size, n_heads=n_heads, dropout_rate=dropout_rate, eta=eta, optim_type=optim_type, wub=wub, wlb=wlb, tau_m=tau_m, position_encoding=self.position_encoding, rope_theta=self.rope_theta)
                 self.blocks.append(block)   
                     
             self.output = Output(dkey=subkeys[3], n_embed=self.n_embed, seq_len=self.seq_len, batch_size=self.batch_size, vocab_size=self.vocab_size, eta=eta, optim_type=optim_type, wlb=wlb, wub=wub, tau_m=tau_m)
@@ -132,7 +136,7 @@ class NGCTransformer:
             self.z_target=RateCell("z_target", n_units= self.vocab_size, tau_m=0., act_fx="identity", batch_size=self.batch_size * self.seq_len) 
             self.z_actfx= RateCell("z_actfx", n_units= self.vocab_size, tau_m=0., act_fx="softmax", batch_size=self.batch_size * self.seq_len)
             self.projection = Projection(dkey=subkeys[29], n_embed=self.n_embed, seq_len=self.seq_len, batch_size=self.batch_size,
-                                             vocab_size=self.vocab_size, eta=eta, optim_type=optim_type, pos_learnable=pos_learnable, wub=wub, wlb=wlb, n_blocks=n_layers, n_heads=n_heads, dropout_rate=dropout_rate)
+                                             vocab_size=self.vocab_size, eta=eta, optim_type=optim_type, wub=wub, wlb=wlb, n_blocks=n_layers, n_heads=n_heads, dropout_rate=dropout_rate , position_encoding=self.position_encoding, pos_learnable=self.pos_learnable, rope_theta=self.rope_theta,)
             self.reshape_4d_to_2d = ReshapeComponent("reshape_4d_to_2d",
                                             input_shape=(self.batch_size, self.seq_len, self.n_embed, 1),
                                             output_shape=(self.batch_size * self.seq_len, self.n_embed))
@@ -510,7 +514,15 @@ class NGCTransformer:
         self.embedding_evolve = processes.get("embedding_evolve_process", self.evolve) 
 
         self.embedding.W_embed.word_weights.set(self.circuit.get_components("W_embed").word_weights.get())
-        self.embedding.W_embed.pos_weights.set(self.circuit.get_components("W_embed").pos_weights.get())
+        if self.use_positional and self.pos_learnable:
+            if not hasattr(self.circuit.get_components("W_embed"), "pos_weights"):
+                raise ValueError(
+                    "Loaded model has no pos_weights."
+                    "It may have been trained with position_encoding='rope'."               
+                )
+            self.embedding.W_embed.pos_weights.set(
+                self.circuit.get_components("W_embed").pos_weights.get()
+            )
         self.output.W_out.weights.set(self.circuit.get_components("W_out").weights.get())
         self.output.W_out.biases.set(self.circuit.get_components("W_out").biases.get())
         self.embedding.W_embed.word_opt_params.set(self.circuit.get_components("W_embed").word_opt_params.get())
@@ -681,14 +693,13 @@ class NGCTransformer:
         ## skip E/M steps if just doing test-time inference
         return y_mu_inf, y_mu, EFE
 
-    
-
     def count_parameters(self):
         """Count total number of learnable parameters in the model."""
         total = 0
         # Embedding weights
         total += self.embedding.W_embed.word_weights.get().size
-        if self.embedding.W_embed.pos_learnable:
+
+        if self.use_positional and self.pos_learnable:
             total += self.embedding.W_embed.pos_weights.get().size
         # Transformer blocks
         for block in self.blocks:

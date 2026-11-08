@@ -57,8 +57,16 @@ def load_weights_into_model(model, model_dir):
 
     embed_data = jnp.load(os.path.join(custom_dir, "W_embed.npz"))
     model.embedding.W_embed.word_weights.set(embed_data["word_weights"])
-    if model.embedding.W_embed.pos_learnable:
+
+    if model.use_positional and model.pos_learnable:
+        if "pos_weights" not in embed_data:
+            raise ValueError(
+                "Checkpoint has no pos_weights. "
+                "Check the configured mode and checkpoint directory."
+
+            )
         model.embedding.W_embed.pos_weights.set(embed_data["pos_weights"])
+
 
     for i in range(model.n_layers):
         for name in ["W_q", "W_k", "W_v", "W_attn_out", "W_mlp1", "W_mlp2"]:
@@ -96,10 +104,12 @@ if __name__ == "__main__":
         act_fx=config.act_fx,
         eta=config.eta,
         dropout_rate=config.dropout_rate,
-        exp_dir="exp",
-        model_name="ngc_transformer",
-        loadDir="exp",  
+        exp_dir=config.exp_dir,
+        position_encoding=config.position_encoding,
         pos_learnable=config.pos_learnable,
+        rope_theta=config.rope_theta,
+        model_name="ngc_transformer",
+        loadDir=config.exp_dir,  
         optim_type=config.optim_type,
         wub=config.wub,
         wlb=config.wlb,

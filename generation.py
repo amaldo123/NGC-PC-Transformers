@@ -148,9 +148,11 @@ if __name__ == "__main__":
         act_fx=config.act_fx, 
         eta=config.eta, 
         dropout_rate=config.dropout_rate, 
-        exp_dir="exp",
-        loadDir="exp", # Ensure model is loaded from trained exp/ directory
-        pos_learnable=config.pos_learnable, 
+        exp_dir=config.exp_dir,
+        loadDir=config.exp_dir, # Ensure model is loaded from trained exp/ directory
+        position_encoding=config.position_encoding,
+        pos_learnable=config.pos_learnable,
+        rope_theta=config.rope_theta,
         optim_type=config.optim_type, 
         wub=config.wub, 
         wlb=config.wlb, 

@@ -11,7 +11,7 @@ from utils.model_util import ReshapeComponent
 
 class ProjBlock:
     def __init__(self, dkey, block_id, n_embed, seq_len, vocab_size,
-                 batch_size, n_heads, dropout_rate, eta, optim_type, wub, wlb, **kwargs):
+                 batch_size, n_heads, dropout_rate, eta, optim_type, wub, wlb,position_encoding, rope_theta, **kwargs):
         
         dkey, *subkeys = random.split(dkey, 20)
         prefix = f"block_proj{block_id}_"
