@@ -43,6 +43,9 @@ def apply_rotary_emb(xq, xk, cos, sin):
     xq, xk expected shape: (B, H, S, D) or (B, S, H, D) depending on integration.
     cos, sin expected shape: (S, D)
     """
+    # Reshape cos/sin for broadcasting
+    # Assuming xq, xk is (B, H, S, D) or (B, S, H, D), we need cos/sin to be alignable.
+    # In attention_utils, q, k are flattened out or transposed to (B, H, S, D)
     cos = cos[None, None, :, :]  # shape: [1, 1, S, D]
     sin = sin[None, None, :, :]  # shape: [1, 1, S, D]
     
@@ -58,6 +61,9 @@ def apply_rotary_emb_inv(xq_rot, xk_rot, cos, sin):
     cos = cos[None, None, :, :]  # shape: [1, 1, S, D]
     sin = sin[None, None, :, :]  # shape: [1, 1, S, D]
     
+    # The transpose of the rotation matrix is its inverse, 
+    # which corresponds to replacing theta with -theta.
+    # cos(-theta) = cos(theta), sin(-theta) = -sin(theta)
     xq_out = (xq_rot * cos) - (rotate_half(xq_rot) * sin)
     xk_out = (xk_rot * cos) - (rotate_half(xk_rot) * sin)
     return xq_out, xk_out

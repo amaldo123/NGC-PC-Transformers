@@ -8,13 +8,23 @@ class Config:
     n_layers = 4
     dropout_rate = 0.1
     eta = 4.919042890915579e-06
-    eta_o= 4.919042890915579e-03
-    exp_dir = "exp" 
-    pos_learnable = True
+    eta_o= 2.9e-03
+    exp_dir = "exp_rope" # either "exp_rope" or "exp_positional_learned" or "exp_positional_fixed"
     optim_type = "sgd"
     epoch = 5
     n_iter= 26
     tau_o = 20
+
+    #configuration of encoding either rope or positional
+    position_encoding= "rope"
+
+    # Used only when position_encoding == "positional"
+    # True: learned absolute embeddings
+    # False: fixed sinusoidal embeddings
+    pos_learnable = False 
+
+    rope_theta = 10000.0
+
     # Approximate Xavier scaling: 1 / sqrt(512) is about 0.04
     wub = 0.035284728580901155
     wlb =  -0.07318664527441558
@@ -37,6 +47,9 @@ class Config:
     # When tokenizer == "BPE", tokenizer_vocab_file may point to a vocab json or a newline token list.
     # Optional: set to None to use a simple fallback whitespace tokenizer.
     tokenizer_vocab_file = None
+
+    # set True to Use jax.lax.scan fused advance loop (faster, minor floating-point differences from the normal python loop)
+    fused_advance = True
     # Optional saved character vocabulary. When None, get_tokenizer() checks the
     # default data_preprocess/outputs/tokenizer/character_tokenizer.json path.
     character_tokenizer_vocab_file = None

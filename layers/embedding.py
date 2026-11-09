@@ -9,7 +9,7 @@ class EMBEDDING:
     """
    embedding layer using the EmbeddingSynapse
     """
-    def __init__(self, dkey, vocab_size, seq_len, embed_dim, batch_size, pos_learnable, eta, optim_type, **kwargs):
+    def __init__(self, dkey, vocab_size, seq_len, embed_dim, batch_size, eta, optim_type, position_encoding, pos_learnable, **kwargs):
         
         dkey, *subkeys = random.split(dkey, 4)
     
@@ -23,13 +23,14 @@ class EMBEDDING:
                 seq_len=seq_len,
                 embed_dim=embed_dim, 
                 batch_size=batch_size,
-                pos_learnable=pos_learnable,
                 eta=eta,
                 optim_type=optim_type,
                 w_bound=1.,
                 is_nonnegative=False,
                 prior=("constant", 0.),
                 weight_init=dist.fan_in_gaussian(),
+                position_encoding=position_encoding,
+                pos_learnable=pos_learnable,
                 key=subkeys[0])
             
         self.e_embed = ErrorCell("e_embed", n_units=embed_dim, 

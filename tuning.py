@@ -39,7 +39,6 @@ def define_search_space(trial):
 
     return {
         "n_layers": trial.suggest_int("n_layers", 1, 8),
-        "pos_learnable": trial.suggest_categorical("pos_learnable", [True, False]),
         "eta": trial.suggest_float("eta", 1e-6, 1e-4, log=True),
         "tau_m": trial.suggest_int("tau_m", 10, 20),
         "n_iter": trial.suggest_int("n_iter", 1, 30),
@@ -106,11 +105,13 @@ def create_model_with_all_params(trial_number, params, cfg):
         "dropout_rate": cfg.dropout_rate,
         "exp_dir": None,
         "loadDir": None,
-        "pos_learnable": cfg.pos_learnable,
         "optim_type": cfg.optim_type,
         "wub": cfg.wub,
         "wlb": cfg.wlb,
-        "model_name": f"trial_{trial_number}"
+        "model_name": f"trial_{trial_number}",
+        "position_encoding": cfg.position_encoding,
+        "pos_learnable": cfg.pos_learnable,
+        "rope_theta": cfg.rope_theta,
     }
 
     model = NGCTransformer(**model_args)
@@ -331,7 +332,7 @@ def case1_efe_to_ce_complete():
         print(f"Corresponding CE: {best_efe_ce}")
         print(f"\nBest Architecture Parameters (FIXED for Phase 2):")
         for key in ['n_layers', 'n_heads', 'n_embed', 'tau_m', 'n_iter', 
-                   'batch_size', 'seq_len', 'pos_learnable', 'optim_type', 'act_fx']:
+                   'batch_size', 'seq_len', 'optim_type', 'act_fx']:
             print(f"  {key}: {best_params.get(key)}")
         print(f"\nContinuous Parameters to be fine-tuned in Phase 2:")
         for key in ['eta', 'dropout_rate', 'wub', 'wlb']:
