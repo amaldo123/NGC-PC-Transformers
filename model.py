@@ -705,6 +705,10 @@ class NGCTransformer:
     def get_latents(self):
         return self.projection.q_out_Ratecell.z.get()
 
+    def get_logits(self):
+        """Returns raw pre-softmax output projection logits."""
+        return self.projection.Q_out.outputs.get()
+
 
 def build_model_from_config(
     dkey=None,

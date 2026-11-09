@@ -34,7 +34,7 @@ if _REPO_ROOT not in sys.path:
 import jax.numpy as jnp
 from config import Config as config
 from data_preprocess.tokenizer import get_tokenizer, BPETokenizer, CharacterTokenizer
-from inference.decoder import load_weights, generate as fast_generate
+from inference.decoder import load_weights, generate as fast_generate, sample
 
 
 def setup_tokenizer():
@@ -124,38 +124,31 @@ def generate_text_legacy(
 
         # Forward pass (no target clamping during inference)
         dummy_target = jnp.zeros((config.batch_size * config.seq_len, config.vocab_size))
-
         y_mu_inf, _, _ = model.process(input_seq, dummy_target, adapt_synapses=False)
-        probs_3d = y_mu_inf.reshape(config.batch_size, config.seq_len, config.vocab_size)
 
-        # Get probabilities for the last *real* token (excluding padding)
+        # Extract pre-softmax logits directly from the projection layer
+        if hasattr(model, "get_logits"):
+            logits_2d = model.get_logits()
+        elif hasattr(model, "projection") and hasattr(model.projection, "Q_out"):
+            logits_2d = model.projection.Q_out.outputs.get()
+        else:
+            logits_2d = jnp.log(y_mu_inf + 1e-9)
+
+        logits_3d = logits_2d.reshape(config.batch_size, config.seq_len, config.vocab_size)
+
+        # Get logits for the last *real* token (excluding padding)
         if len(tokens_list) > config.seq_len:
             last_pos = config.seq_len - 1
         else:
             last_pos = len(tokens_list) - 1
-        last_probs = probs_3d[0, last_pos, :]
+        last_logits = logits_3d[0, last_pos, :]
 
-        # Note: y_mu_inf is already softmax probabilities from q_target_Ratecell.
-        # Apply log(probs + 1e-9) / temperature to produce properly scaled logits.
-        if temperature > 0.0:
-            next_logits = jnp.log(last_probs + 1e-9) / max(temperature, 1e-6)
-            if current_key is not None:
-                if top_k is not None and top_k > 0:
-                    k_val = min(int(top_k), config.vocab_size)
-                    top_vals, top_idx = jax.lax.top_k(next_logits, k=k_val)
-                    p = jax.nn.softmax(top_vals)
-                    current_key, subkey = jax.random.split(current_key)
-                    choice = jax.random.choice(subkey, a=k_val, p=p)
-                    next_token = int(top_idx[choice])
-                else:
-                    p = jax.nn.softmax(next_logits)
-                    current_key, subkey = jax.random.split(current_key)
-                    next_token = int(jax.random.choice(subkey, a=config.vocab_size, p=p))
-            else:
-                next_token = int(jnp.argmax(next_logits))
+        if current_key is not None:
+            current_key, subkey = jax.random.split(current_key)
         else:
-            next_token = int(jnp.argmax(last_probs))
+            subkey = None
 
+        next_token = sample(last_logits, key=subkey, temperature=temperature, top_k=top_k)
         tokens_list.append(next_token)
 
     # Decode generated IDs back to text
